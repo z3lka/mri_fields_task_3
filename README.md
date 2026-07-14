@@ -1,145 +1,112 @@
-# MRIxFields2026 Task 3 validation baseline
+# MRIxFields2026 Task 3
 
-This workspace now contains a resumable Python runner for the organizers'
-single shared Task 3 StarGAN v2 checkpoint. It is prepared for local use or a
-Colab GPU. It does not train, package, upload, or pretend to compute public
-validation scores without the organizers' private targets.
+This workspace is Task 3 only. The organizer-pretrained baseline and future
+training are deliberately separate:
 
-Pinned upstream versions used while preparing the runner on 2026-07-12:
+| Workflow | Entry point | Runtime results |
+| --- | --- | --- |
+| Official pretrained baseline, validation predictions, and task3.zip | task3_pretrained_baseline_colab.ipynb | /content/mrixfields_task3/pretrained/results/ |
+| Future training and local holdout results | task3_stargan_v2_colab.ipynb | /content/mrixfields_task3/training/results/ |
 
-- Official code: `MRIxFields/MRIxFields2026` commit
-  `f0f4ab2c54ab878b48ddfea8d13f4da512ca411e`
-- Official weights: `mrixfields/MRIxFields2026-Baseline` revision
-  `f1a7d6b741b64c81871d0856fa2d7295d564c141`
-- Checkpoint: `task3_any_to_any_multimodal/stargan_v2/pro_pretrained/weights/checkpoint_epoch50.pth`
+The baseline milestone comes first. Do not enable any training switch until
+the pretrained notebook has produced a structurally and numerically validated
+180-file task3.zip.
 
-The local `T1W/` sample was inspected: it contains the expected 15 validation
-volumes and official IDs. All headers report float32, `(364, 436, 364)`, and
-0.5 mm isotropic voxels.
+## Runtime and Drive boundary
 
-## Local preparation (no inference)
+Both notebooks use mounted Drive only as persistent source/export storage:
 
-Create an environment and install the small inference dependency set. A
-CUDA-enabled PyTorch installation is also required for practical inference.
+1. Mount Drive.
+2. Copy the required scripts, selected NIfTI split, and optional checkpoint
+   into that workflow's /content runtime tree.
+3. Audit, preprocess, infer, train, validate, and package entirely in runtime.
+4. At the end, explicitly enable the final export cell to copy only selected
+   final artifacts back to the workflow's separate Drive export folder.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-colab.txt
-```
+Predictions, preprocessing caches, package caches, temporary checkpoints, and
+submission build trees are never written directly to Drive. Runtime contents
+disappear when Colab resets, so enable the final export only after the result
+you want to keep has passed its checks.
 
-The organizer repository has already been placed under
-`official/MRIxFields2026/` in this workspace. To reproduce that checkout on a
-new machine:
+## Pretrained baseline
 
-```bash
-python task3_pipeline.py fetch-official
-```
+Open task3_pretrained_baseline_colab.ipynb. It owns the complete baseline path:
 
-Audit the T1W inputs. Header-only audit is quick; `--check-values` reads all
-871 MB and additionally checks finite values and the `[0,1]` range.
+- stage the 45 released validation NIfTI files into runtime;
+- recheck the live organizer Git and Hugging Face revisions;
+- stage and SHA-256-check the one shared multimodal checkpoint;
+- audit all inputs and plan all 180 non-identity translations;
+- run one separate full-volume smoke case;
+- run and validate the complete 180-volume sweep;
+- call the official Task 3 builder;
+- validate the exact 60-pair-directory/180-file slab tree;
+- create task3.zip with top-level task3/; and
+- optionally export the archive and compact JSON reports.
 
-```bash
-python task3_pipeline.py audit --input-root T1W --modalities T1W
-python task3_pipeline.py audit --input-root T1W --modalities T1W --check-values
-```
+No cell uploads the archive.
 
-Preview every planned T1W output without loading a model:
+The underlying focused Python tools are:
 
-```bash
-python task3_pipeline.py plan --input-root T1W --modalities T1W
-```
+- task3_pipeline.py: input audit, case plan, checkpoint download, inference,
+  and full-volume validation;
+- task3_build_submission.py: official builder invocation, submission-tree
+  checks, numerical checks, archive creation, and archive SHA-256.
 
-This should report 15 inputs and 60 translations: five source fields, four
-non-identity targets, and three IDs per source field.
+The final archive contract is:
 
-## Colab GPU workflow
+    task3.zip
+    └── task3/
+        ├── T1W/<source>_to_<target>/pred/*.nii.gz
+        ├── T2W/<source>_to_<target>/pred/*.nii.gz
+        └── T2FLAIR/<source>_to_<target>/pred/*.nii.gz
 
-Copy `task3_pipeline.py` and `requirements-colab.txt` to Colab or Google Drive,
-select a GPU runtime, and run:
+It must contain 20 directed non-identity field pairs per modality, three files
+per pair, no identity mappings, and no segmentation content.
 
-```bash
-pip install -r requirements-colab.txt
-python task3_pipeline.py fetch-official
-python task3_pipeline.py download-checkpoint
-```
+## Training
 
-Mount Drive and point `--input-root` and `--output-dir` at persistent Drive
-paths. The input may be either the single `T1W/` directory shown in this
-workspace or a validation root containing `T1W/`, `T2W/`, and `T2FLAIR/`.
+Open task3_stargan_v2_colab.ipynb only after the pretrained milestone. It
+contains:
 
-Always start with exactly one full-volume smoke translation:
+- prospective/optional retrospective staging into its own runtime data tree;
+- raw-data and extracted-slice audits;
+- an explicit baseline-milestone gate;
+- the subject-held-out pilot and its per-modality nRMSE/SSIM/LPIPS proxies;
+- optional all-subject continuation; and
+- one selected-checkpoint plus metrics/provenance export.
 
-```bash
-python task3_pipeline.py infer \
-  --input-root /content/drive/MyDrive/mrixfields2026/validation_prospective/T1W \
-  --output-dir /content/drive/MyDrive/mrixfields_runs/smoke \
-  --modalities T1W \
-  --device cuda \
-  --batch-size 1 \
-  --smoke
+It contains no pretrained validation sweep, submission builder, or archive
+export. See TASK3_TRAINING_COLAB.md for experiment constraints.
 
-python task3_pipeline.py validate-outputs \
-  --input-root /content/drive/MyDrive/mrixfields2026/validation_prospective/T1W \
-  --output-dir /content/drive/MyDrive/mrixfields_runs/smoke \
-  --modalities T1W \
-  --smoke
-```
+## Reproducibility pins
 
-If the smoke case passes and GPU memory is comfortable, run the T1W sweep:
+Prepared pins:
 
-```bash
-python task3_pipeline.py infer \
-  --input-root /content/drive/MyDrive/mrixfields2026/validation_prospective/T1W \
-  --output-dir /content/drive/MyDrive/mrixfields_runs/baseline \
-  --modalities T1W \
-  --device cuda \
-  --batch-size 1 \
-  --resume
+- Official code commit:
+  f0f4ab2c54ab878b48ddfea8d13f4da512ca411e
+- Hugging Face revision:
+  f1a7d6b741b64c81871d0856fa2d7295d564c141
+- Shared checkpoint:
+  task3_any_to_any_multimodal/stargan_v2/pro_pretrained/weights/checkpoint_epoch50.pth
+- Checkpoint size: 631346455 bytes
+- Checkpoint SHA-256:
+  c2f8172c1fbdbf0426e22c7d3d2014632f175a38cf818f95e72b1917badabdeb
 
-python task3_pipeline.py validate-outputs \
-  --input-root /content/drive/MyDrive/mrixfields2026/validation_prospective/T1W \
-  --output-dir /content/drive/MyDrive/mrixfields_runs/baseline \
-  --modalities T1W
-```
+The pretrained notebook checks live default revisions before it runs. If a
+revision differs, stop and review the official Task 3 config, weight, and
+submission contract as one coherent update.
 
-`--resume` validates each existing full-volume prediction before skipping it.
-Outputs are written atomically, and the manifest is updated after every
-completed volume. Start with batch size 1; only increase it after observing
-the smoke run's peak GPU memory.
+The final build is also locked behind LIVE_RULES_REVIEWED. The current GitHub
+submission README specifies a validation task3.zip, while the challenge tasks
+page also uses broader container-submission language. Confirm which mechanism
+applies to the current validation phase before exporting or uploading. The
+workspace never uploads either form.
 
-When all three modality folders are available, use their common parent and
-request all modalities:
+## Local non-GPU checks
 
-```bash
-python task3_pipeline.py infer \
-  --input-root /content/drive/MyDrive/mrixfields2026/validation_prospective \
-  --output-dir /content/drive/MyDrive/mrixfields_runs/baseline \
-  --modalities T1W T2W T2FLAIR \
-  --device cuda \
-  --batch-size 1 \
-  --resume
-```
+    python -m unittest discover -v
+    python task3_pipeline.py audit --input-root T1W --modalities T1W
+    python task3_pipeline.py plan --input-root T1W --modalities T1W
 
-That complete run plans 180 full-volume predictions. It loads one checkpoint
-once and computes the correct 15-way joint target-domain index. This matters
-for T2W and T2FLAIR: the organizer's current `--target_field` shortcut only
-maps field names to indices 0-4, which are the T1W domains.
-
-## What “validation results” means here
-
-The released validation subjects do not include paired targets. Therefore the
-local result is a validated set of predictions, not nRMSE/SSIM/LPIPS scores.
-Those scores come from the public leaderboard after submission. Local metric
-experiments require correctly paired `training_prospective` data or a documented
-holdout; never pair different public validation IDs.
-
-## Packaging discrepancy to resolve later
-
-The current official repository says `task3.zip` must contain a top-level
-`task3/` directory. The workspace instructions currently say the zip root must
-instead directly contain `T1W/`, `T2W/`, and `T2FLAIR/`. Because these contracts
-conflict, this pass intentionally does not create a zip. Re-check the official
-repository and competition page immediately before packaging, then use the
-current official builder after resolving the discrepancy.
-
+The released validation targets are private. A validated prediction set is not
+a local metric result; public-validation metrics come from the leaderboard.
