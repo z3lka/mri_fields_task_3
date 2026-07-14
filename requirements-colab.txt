@@ -1,0 +1,7 @@
+# Colab already provides a CUDA-enabled PyTorch build. Do not replace it here.
+numpy>=1.24,<2.0
+nibabel>=5.0,<6.0
+PyYAML>=6.0
+tqdm>=4.65
+huggingface-hub>=0.23
+

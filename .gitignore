@@ -1,0 +1,21 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Sensitive/large competition artifacts
+*.nii
+*.nii.gz
+*.pth
+*.pt
+*.ckpt
+*.zip
+weights/
+runs/
+outputs/
+submissions/
+
+# Organizer checkout is pinned/fetched separately.
+official/
+
