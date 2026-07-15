@@ -79,6 +79,67 @@ class Task3NotebookSeparationTests(unittest.TestCase):
                     self.assertNotIn("export_dir.mkdir", cell)
                     self.assertNotIn("DRIVE_EXPORT_ROOT / EXPORT_NAME_VALUE", cell)
 
+    def test_drive_is_unmounted_for_every_processing_cell(self):
+        for path, export_flag in (
+            (PRETRAINED_NOTEBOOK, "EXPORT_PRETRAINED_RESULT"),
+            (TRAINING_NOTEBOOK, "EXPORT_TRAINING_RESULT"),
+        ):
+            notebook = load_notebook(path)
+            code_cells = [
+                str(cell["source"])
+                for cell in notebook["cells"]
+                if cell["cell_type"] == "code"
+            ]
+            staging_indexes = [
+                index
+                for index, cell in enumerate(code_cells)
+                if "Runtime staging complete. Drive is unmounted" in cell
+            ]
+            export_indexes = [
+                index for index, cell in enumerate(code_cells) if export_flag in cell
+            ]
+            self.assertEqual(len(staging_indexes), 1)
+            self.assertEqual(export_indexes, [len(code_cells) - 1])
+            self.assertEqual(sum(cell.count("drive.mount(") for cell in code_cells), 2)
+            self.assertEqual(
+                sum(cell.count("drive.flush_and_unmount()") for cell in code_cells),
+                2,
+            )
+            self.assertIn("drive.mount(str(DRIVE_MOUNT))", code_cells[0])
+            self.assertIn("drive.flush_and_unmount()", code_cells[staging_indexes[0]])
+            self.assertIn("drive.mount(str(DRIVE_MOUNT))", code_cells[-1])
+            self.assertIn("drive.flush_and_unmount()", code_cells[-1])
+            for cell in code_cells[staging_indexes[0] + 1 : export_indexes[0]]:
+                self.assertNotIn("DRIVE_", cell)
+                self.assertNotIn("drive.", cell)
+
+    def test_expensive_work_has_runtime_only_guard(self):
+        expected_cells = {
+            PRETRAINED_NOTEBOOK: (
+                "if RUN_PRETRAINED_SMOKE:",
+                "if RUN_PRETRAINED_FULL_SWEEP:",
+                "if BUILD_PRETRAINED_TASK3_ZIP:",
+            ),
+            TRAINING_NOTEBOOK: (
+                "if RUN_PROSPECTIVE_PREPROCESS:",
+                "if RUN_PILOT:",
+                "if RUN_FULL_FINETUNE:",
+                "if RUN_RETROSPECTIVE_PREPROCESS:",
+                "if RUN_RETROSPECTIVE_PRETRAIN:",
+            ),
+        }
+        for path, needles in expected_cells.items():
+            notebook = load_notebook(path)
+            code_cells = [
+                str(cell["source"])
+                for cell in notebook["cells"]
+                if cell["cell_type"] == "code"
+            ]
+            for needle in needles:
+                matching = [cell for cell in code_cells if needle in cell]
+                self.assertEqual(len(matching), 1, needle)
+                self.assertIn("assert_runtime_only()", matching[0])
+
     def test_all_expensive_switches_default_to_off(self):
         pretrained = source_text(load_notebook(PRETRAINED_NOTEBOOK))
         training = source_text(load_notebook(TRAINING_NOTEBOOK))

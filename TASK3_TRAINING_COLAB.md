@@ -22,11 +22,14 @@ The training notebook uses:
         ├── reports/
         └── training_runs/
 
-The mounted dataset and optional initialization checkpoint are read once by
-explicit staging cells and copied into this runtime tree. Audit,
-preprocessing, training, checkpointing, and metric evaluation use only runtime
-paths. The last cell is the only Drive write and exports one selected
-checkpoint with its provenance.json and train.jsonl.
+The selected prospective data, optional retrospective data, and optional
+initialization checkpoint are read once by the initial staging cell and copied
+into this runtime tree. That cell verifies the copies, flushes Drive, and
+unmounts it. Audit, preprocessing, training, checkpointing, and metric
+evaluation refuse to run while Drive is mounted and use only runtime paths.
+The last cell optionally remounts Drive, exports one selected checkpoint with
+its provenance.json and train.jsonl, verifies the checkpoint copy, and
+unmounts Drive again.
 
 Use distinct persistent export roots:
 
@@ -40,12 +43,14 @@ full-volume prediction trees.
 ## Experiment order
 
 1. Complete and report the organizer-pretrained baseline milestone.
-2. Stage and audit the prospective split in runtime.
-3. Extract and audit the organizer's 220 axial slices in runtime.
-4. Run the short pilot_subject_holdout experiment from scratch.
-5. Review per-modality slice-proxy nRMSE, SSIM, and LPIPS plus images.
-6. Only with a measured reason, run a conservative all-subject continuation.
-7. Export one selected checkpoint and its compact result/provenance files.
+2. Select all needed inputs, stage them in runtime, and unmount Drive.
+3. Audit the prospective split in runtime.
+4. Extract and audit the organizer's 220 axial slices in runtime.
+5. Run the short pilot_subject_holdout experiment from scratch.
+6. Review per-modality slice-proxy nRMSE, SSIM, and LPIPS plus images.
+7. Only with a measured reason, run a conservative all-subject continuation.
+8. Optionally remount Drive and export one selected checkpoint plus its compact
+   result/provenance files; the export cell unmounts Drive when finished.
 
 The released pro_pretrained/checkpoint_epoch50.pth already saw the prospective
 split. It cannot initialize an honest prospective-subject holdout. The default

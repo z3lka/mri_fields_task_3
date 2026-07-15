@@ -17,12 +17,16 @@ the pretrained notebook has produced a structurally and numerically validated
 Both notebooks use mounted Drive only as persistent source/export storage:
 
 1. Mount Drive.
-2. Copy the required scripts, selected NIfTI split, and optional checkpoint
-   into that workflow's /content runtime tree.
-3. Audit, preprocess, infer, train, validate, and package entirely in runtime.
-4. At the end, explicitly enable the final export cell to copy only selected
-   final artifacts back to the workflow's separate Drive export folder.
+2. Select every required input, then copy the scripts, NIfTI split(s), and
+   checkpoint into that workflow's `/content` runtime tree.
+3. Verify the runtime copies, flush Drive, and unmount it.
+4. Audit, preprocess, infer, train, validate, and package entirely in runtime.
+   Processing cells fail if Drive is still mounted.
+5. At the end, explicitly enable the final export cell. It remounts Drive,
+   copies only selected final artifacts to the workflow's separate export
+   folder, verifies the copy, and unmounts Drive again.
 
+There is no Drive I/O while a model or data-processing process is running.
 Predictions, preprocessing caches, package caches, temporary checkpoints, and
 submission build trees are never written directly to Drive. Runtime contents
 disappear when Colab resets, so enable the final export only after the result
