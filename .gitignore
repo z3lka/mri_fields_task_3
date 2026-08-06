@@ -7,6 +7,7 @@ __pycache__/
 # Sensitive/large competition artifacts
 *.nii
 *.nii.gz
+*.npz
 *.pth
 *.pt
 *.ckpt
@@ -14,8 +15,8 @@ __pycache__/
 weights/
 runs/
 outputs/
+preprocessed/
 submissions/
 
 # Organizer checkout is pinned/fetched separately.
 official/
-

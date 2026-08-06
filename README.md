@@ -82,6 +82,22 @@ contains:
 It contains no pretrained validation sweep, submission builder, or archive
 export. See TASK3_TRAINING_COLAB.md for experiment constraints.
 
+## Conditional FPS-Former experiment
+
+The paper-based replacement model is implemented entirely in the
+`task3_fpsformer/` Python package; it does not use a notebook:
+
+- `task3_fpsformer/data.py`: paired prospective audit and slice cache;
+- `task3_fpsformer/model.py`: FMAM, SPAM, SDFN, HEFR, and one shared
+  modality/source-field/target-field conditioned encoder-decoder;
+- `task3_fpsformer/train.py`: subject-held-out, resumable training on MPS or
+  CUDA; and
+- `task3_fpsformer/infer.py`: smoke or complete 180-volume validation sweep.
+
+See `task3_fpsformer/README.md` for the paper-to-Task-3 adaptation, known
+departures from the unpublished reference implementation, and exact Mac/Colab
+commands.
+
 ## Reproducibility pins
 
 Prepared pins:

@@ -1,0 +1,6 @@
+# Python 3.11 or 3.12 is recommended for the broadest Apple Silicon wheel support.
+torch>=2.4
+torchvision>=0.19
+numpy>=1.24,<2.0
+nibabel>=5.2,<6.0
+lpips==0.1.4
