@@ -122,6 +122,21 @@ class TorchModelTests(unittest.TestCase):
         self.assertLessEqual(float(prediction.max()), 1.0)
         self.assertTrue(torch.allclose(prediction, source, atol=2e-4, rtol=0.0))
 
+    def test_spatial_attention_supports_mixed_precision_autocast(self) -> None:
+        import torch
+
+        from task3_fpsformer.model import SpatialPurificationAttention
+
+        module = SpatialPurificationAttention(
+            16, 1, groups=4, max_group_tokens=64
+        ).eval()
+        source = torch.rand(1, 16, 8, 8)
+        with torch.inference_mode(), torch.autocast("cpu", dtype=torch.bfloat16):
+            prediction = module(source)
+        self.assertEqual(prediction.shape, source.shape)
+        self.assertEqual(prediction.dtype, torch.bfloat16)
+        self.assertTrue(torch.isfinite(prediction).all())
+
     def test_losses_are_finite(self) -> None:
         import torch
 

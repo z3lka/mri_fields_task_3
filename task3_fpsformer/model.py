@@ -252,7 +252,10 @@ class SpatialPurificationAttention(nn.Module):
         attended = self.output(attended).reshape(batch, padded_count, channels)
         attended = attended[:, :token_count]
 
-        restored = torch.zeros_like(tokens)
+        # Under autocast, ``tokens`` can remain float32 while the projected
+        # attention output is fp16/bf16. scatter_ requires destination and
+        # source dtypes to match exactly, so allocate from the attended tensor.
+        restored = attended.new_zeros(tokens.shape)
         restored.scatter_(1, order[:, :, None].expand(-1, -1, channels), attended)
         return restored.transpose(1, 2).reshape(batch, channels, height, width)
 

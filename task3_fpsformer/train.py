@@ -29,6 +29,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, RandomSampler
+from tqdm import tqdm
 
 from task3_fpsformer.common import (
     PAPER_ID,
@@ -230,10 +231,22 @@ def validate(
     device: torch.device,
     amp: AmpController,
     perceptual: OptionalLPIPS,
+    *,
+    progress: bool = False,
+    description: str = "validation",
 ) -> dict[str, Any]:
     model.eval()
     metrics = MetricAccumulator()
-    for batch in loader:
+    batches = tqdm(
+        loader,
+        total=len(loader),
+        desc=description,
+        unit="batch",
+        dynamic_ncols=True,
+        mininterval=2.0,
+        disable=not progress,
+    )
+    for batch in batches:
         moved = move_batch(batch, device)
         with amp.context():
             prediction = model(
@@ -478,41 +491,58 @@ def train(args: argparse.Namespace) -> None:
             "lpips": 0.0,
         }
         micro_count = 0
-        for micro_step, batch in enumerate(train_loader):
-            moved = move_batch(batch, device)
-            with amp.context():
-                prediction = model(
-                    moved["source"],
-                    moved["modality"],
-                    moved["source_field"],
-                    moved["target_field"],
-                )
-                loss, terms = objective(prediction, moved["target"])
-                scaled_loss = loss / args.gradient_accumulation
-            amp.scaler.scale(scaled_loss).backward()
-            running["total"] += float(loss.detach())
-            for name, value in terms.items():
-                running[name] += float(value.detach())
-            micro_count += 1
+        epoch_progress = tqdm(
+            total=updates_per_epoch,
+            desc=f"train epoch {epoch + 1}/{args.epochs}",
+            unit="update",
+            dynamic_ncols=True,
+            mininterval=2.0,
+            disable=not args.progress,
+        )
+        try:
+            for micro_step, batch in enumerate(train_loader):
+                moved = move_batch(batch, device)
+                with amp.context():
+                    prediction = model(
+                        moved["source"],
+                        moved["modality"],
+                        moved["source_field"],
+                        moved["target_field"],
+                    )
+                    loss, terms = objective(prediction, moved["target"])
+                    scaled_loss = loss / args.gradient_accumulation
+                amp.scaler.scale(scaled_loss).backward()
+                running["total"] += float(loss.detach())
+                for name, value in terms.items():
+                    running[name] += float(value.detach())
+                micro_count += 1
 
-            if (micro_step + 1) % args.gradient_accumulation:
-                continue
-            if args.clip_grad_norm > 0:
-                amp.scaler.unscale_(optimizer)
-                clip_grad_norm_(model.parameters(), args.clip_grad_norm)
-            amp.scaler.step(optimizer)
-            amp.scaler.update()
-            optimizer.zero_grad(set_to_none=True)
-            scheduler.step()
-            global_step += 1
-            if global_step % args.print_every == 0:
+                if (micro_step + 1) % args.gradient_accumulation:
+                    continue
+                if args.clip_grad_norm > 0:
+                    amp.scaler.unscale_(optimizer)
+                    clip_grad_norm_(model.parameters(), args.clip_grad_norm)
+                amp.scaler.step(optimizer)
+                amp.scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
+                global_step += 1
                 divisor = max(1, micro_count)
-                print(
-                    f"epoch={epoch + 1}/{args.epochs} step={global_step} "
-                    f"loss={running['total'] / divisor:.6f} "
-                    f"l1={running['l1'] / divisor:.6f} "
-                    f"lr={optimizer.param_groups[0]['lr']:.3e}"
+                epoch_progress.set_postfix(
+                    loss=f"{running['total'] / divisor:.5f}",
+                    lr=f"{optimizer.param_groups[0]['lr']:.2e}",
+                    refresh=False,
                 )
+                epoch_progress.update(1)
+                if not args.progress and global_step % args.print_every == 0:
+                    print(
+                        f"epoch={epoch + 1}/{args.epochs} step={global_step} "
+                        f"loss={running['total'] / divisor:.6f} "
+                        f"l1={running['l1'] / divisor:.6f} "
+                        f"lr={optimizer.param_groups[0]['lr']:.3e}"
+                    )
+        finally:
+            epoch_progress.close()
 
         record: dict[str, Any] = {
             "kind": "epoch",
@@ -528,7 +558,13 @@ def train(args: argparse.Namespace) -> None:
         improved = False
         if validation_loader is not None and (epoch + 1) % args.eval_every == 0:
             record["holdout"] = validate(
-                model, validation_loader, device, amp, validation_lpips
+                model,
+                validation_loader,
+                device,
+                amp,
+                validation_lpips,
+                progress=args.progress,
+                description=f"validate epoch {epoch + 1}/{args.epochs}",
             )
             current_nrmse = float(record["holdout"]["overall"]["slice_proxy_nrmse"])
             improved = current_nrmse < best_nrmse
@@ -594,6 +630,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-every", type=int, default=1)
     parser.add_argument("--eval-lpips", action="store_true")
     parser.add_argument("--print-every", type=int, default=50)
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show rate-limited tqdm bars for training and holdout validation",
+    )
     parser.add_argument("--resume", type=Path)
     parser.add_argument(
         "--initialize",

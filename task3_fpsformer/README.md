@@ -11,6 +11,7 @@ task3_fpsformer/
 ├── losses.py
 ├── train.py
 ├── infer.py
+├── task3_fpsformer_colab.ipynb
 ├── requirements-colab.txt
 ├── requirements-mac.txt
 └── tests/
@@ -56,6 +57,107 @@ python -m pip install --upgrade pip
 python -m pip install -r task3_fpsformer/requirements-mac.txt
 ```
 
+Verify Metal acceleration before preparing data:
+
+```bash
+python -c "import torch; print(torch.__version__); print(torch.backends.mps.is_available())"
+```
+
+The last line must be `True`. On macOS use `--device mps --amp off --workers
+0`; CUDA-style fp16 is not enabled on MPS in this runner.
+
+### Terminal-only Apple Silicon workflow
+
+Set machine-local paths in each new terminal. `DATA_DIR` is the parent dataset
+root containing both the paired prospective training split and validation
+split, not either split directory itself. Keep derived data and runs outside
+the repository; an external SSD is also suitable.
+
+```bash
+cd /absolute/path/to/mri_competition
+source .venv-fpsformer/bin/activate
+
+export DATA_DIR="/absolute/path/to/mrixfields2026"
+export FPS_RUN_ROOT="/absolute/path/to/mrixfields_task3_runs/fpsformer"
+export FPS_CACHE_DIR="$FPS_RUN_ROOT/cache"
+export FPS_OUTPUT_DIR="$FPS_RUN_ROOT/outputs"
+export FPS_INFERENCE_DIR="$FPS_RUN_ROOT/inference"
+export FPS_REPORT_DIR="$FPS_RUN_ROOT/reports"
+
+mkdir -p "$FPS_CACHE_DIR" "$FPS_OUTPUT_DIR" \
+  "$FPS_INFERENCE_DIR" "$FPS_REPORT_DIR"
+```
+
+Audit and cache the three paired prospective training subjects. These commands
+read but do not modify the source NIfTI files:
+
+```bash
+python -m task3_fpsformer.data audit-raw \
+  --data-dir "$DATA_DIR" \
+  --check-values \
+  --report "$FPS_REPORT_DIR/raw_audit.json"
+
+python -m task3_fpsformer.data prepare-cache \
+  --data-dir "$DATA_DIR" \
+  --cache-dir "$FPS_CACHE_DIR"
+
+python -m task3_fpsformer.data audit-cache \
+  --cache-dir "$FPS_CACHE_DIR" \
+  --report "$FPS_REPORT_DIR/cache_audit.json"
+```
+
+Run the two-update MPS smoke in a new output directory:
+
+```bash
+caffeinate -i python -m task3_fpsformer.train \
+  --cache-dir "$FPS_CACHE_DIR" \
+  --output-dir "$FPS_OUTPUT_DIR/tiny_smoke_01" \
+  --preset tiny \
+  --device mps --amp off --workers 0 \
+  --crop-size 128 --eval-crop-size 128 \
+  --gradient-accumulation 1 \
+  --epochs 1 --updates-per-epoch 2 \
+  --val-samples-per-pair 1 \
+  --print-every 1 \
+  --baseline-milestone-complete
+```
+
+After it writes `checkpoints/best.pt`, measure a deliberately short portable
+probe at crop 128 before increasing either crop size or update count:
+
+```bash
+caffeinate -i python -m task3_fpsformer.train \
+  --cache-dir "$FPS_CACHE_DIR" \
+  --output-dir "$FPS_OUTPUT_DIR/portable_probe_01" \
+  --preset portable \
+  --device mps --amp off --workers 0 \
+  --batch-size 1 --gradient-accumulation 1 \
+  --crop-size 128 --eval-crop-size 128 \
+  --epochs 1 --updates-per-epoch 10 \
+  --val-samples-per-pair 1 \
+  --print-every 1 \
+  --baseline-milestone-complete
+```
+
+Check elapsed time, memory pressure, `metrics.jsonl`, and the holdout identity
+baseline before starting a longer pilot. Checkpoints are saved after each
+epoch. Resume an interrupted run with the same model/data settings, the same
+output directory, a new total epoch count, and the last checkpoint:
+
+```bash
+caffeinate -i python -m task3_fpsformer.train \
+  --cache-dir "$FPS_CACHE_DIR" \
+  --output-dir "$FPS_OUTPUT_DIR/portable_probe_01" \
+  --preset portable \
+  --device mps --amp off --workers 0 \
+  --batch-size 1 --gradient-accumulation 1 \
+  --crop-size 128 --eval-crop-size 128 \
+  --epochs 2 --updates-per-epoch 10 \
+  --val-samples-per-pair 1 \
+  --resume "$FPS_OUTPUT_DIR/portable_probe_01/checkpoints/last.pt" \
+  --baseline-milestone-complete
+```
+
 Colab GPU: copy the `.py` files and requirements file to the runtime, then run:
 
 ```bash
@@ -64,6 +166,32 @@ python -m pip install -r task3_fpsformer/requirements-colab.txt
 
 Do not install the Mac requirements in Colab because replacing Colab's matched
 CUDA PyTorch build can break GPU support.
+
+### Complete Colab notebook
+
+[`task3_fpsformer_colab.ipynb`](task3_fpsformer_colab.ipynb) is the guided
+Colab workflow. It keeps the model implementation in the Python package and
+orchestrates package staging, GPU checks, raw/cache audits, tests, tiny and
+portable training, checkpoint selection, validation inference, official
+submission building, numerical validation, and explicit artifact export.
+
+Create the source bundle on your Mac from the workspace root:
+
+```bash
+zip -r task3_fpsformer_colab.zip task3_fpsformer \
+  -x '*/__pycache__/*' '*.pyc' '*/.DS_Store'
+```
+
+This packages the current working files, including changes that have not yet
+been committed. Put the zip in Drive, open the notebook in Colab, select a GPU
+runtime, and edit only the path values in step 1 first. The paper PDF is
+optional; if you want it recorded with run provenance, put it in Drive and set
+`DRIVE_PAPER_PDF_VALUE`. `DRIVE_DATA_ROOT_VALUE` must name the parent dataset
+root containing the paired prospective training split—not
+`validation_prospective` itself. The prepared notebook defaults run one
+Colab-safe 10-epoch held-out pilot and export its selected checkpoint. Full
+validation inference, all-subject continuation, submission building, and
+external upload remain disabled.
 
 On Colab, stage the cache and an optional resume/initialization checkpoint into
 `/content`, unmount Drive, and train entirely in runtime storage. When the
