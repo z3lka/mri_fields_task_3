@@ -17,11 +17,16 @@ task3_fpsformer/
 └── tests/
 ```
 
-This experiment adapts the image-space backbone in `2412.10776v1.pdf` to
-MRIxFields2026 Task 3. The paper solves undersampled k-space reconstruction;
-Task 3 solves field-strength translation. The implementation therefore keeps
-FMAM, SPAM, SDFN, HEFR, and the hierarchical encoder/decoder, removes the
-inapplicable k-space data-consistency layer, and adds shared conditioning for:
+This experiment adapts the design in `2412.10776v1.pdf` to MRIxFields2026 Task
+3. The authors have now released their reconstruction source at
+<https://github.com/XiaoMengLiLiLi/FPS-Former>. The comparison below is pinned
+to commit `166d10d6e045b155b452fb26622b6b22063f82f5` (2025-04-07).
+
+The released project solves undersampled k-space reconstruction; Task 3 solves
+field-strength translation. Our implementation keeps the frequency, spatial,
+multi-scale, expert-refinement, and hierarchical encoder/decoder ideas, removes
+the reconstruction-specific complex/k-space path, and adds shared conditioning
+for:
 
 - modality: `T1W`, `T2W`, or `T2FLAIR`;
 - source field: one of the five Task 3 fields; and
@@ -30,21 +35,39 @@ inapplicable k-space data-consistency layer, and adds shared conditioning for:
 There is one model and one checkpoint for all 60 modality/directed-pair strata.
 No field-specific or modality-specific network is constructed.
 
-## Important implementation distinction
+## Released source compared with this adaptation
 
-The paper does not publish code and leaves details such as channel widths and
-the practical realization of full-resolution attention unspecified. Its
-reported model costs 152 GFLOPs at the paper's image size on an RTX 3090.
+These are related architectures, not interchangeable implementations:
 
-The default `portable` preset uses the paper's reported stage depths
-`(1,2,2,1)`, heads `(1,2,4,8)`, three frequency levels, four hash groups, SDFN
-expansion 2, four HEFR blocks, and a 48-channel first stage. The resulting
-shared model has 11,489,809 parameters, close to the paper's reported 12.51 M;
-the remaining difference reflects details absent from the paper. It caps FMAM
-at 256 pooled tokens and splits large hash groups into at most 128 tokens. This
-keeps the method usable on MPS and typical Colab GPUs. `paper_exact` removes
-both caps and is likely to run out of memory on full Task 3 slices. `tiny` is
-for plumbing tests and Apple Silicon pilots, not a final result.
+| Area | Authors' released reconstruction code | Our Task 3 adaptation |
+| --- | --- | --- |
+| Contract | HDF5 undersampled k-space; 2-channel complex image in/out | NIfTI image-space translation; 1-channel `[0,1]` image in/out |
+| Control | One unconditional reconstruction network | One shared network conditioned on modality, source field, and target field |
+| FMAM | Gaussian/Laplacian channel-attention maps, then channel-to-spatial recalibration | Pooled, multi-head token attention over learned Laplacian-band Q/K/V features |
+| Spatial attention | Two fresh SALSH rounds inside non-overlapping `8x8` patches | One persistent random projection, global hash ordering, bounded token groups |
+| Feed-forward | Released mixed-scale channel flow (`MSFN`) | A lighter two-round 3x3/5x5 depthwise variant |
+| Expert refinement | Two `MEFC` subnets, each with four residual operation-mixture steps over eight operators | Configurable shared expert blocks before the encoder and after the decoder |
+| Resizing | PixelUnshuffle/PixelShuffle with concatenated skips | Strided convolution/bilinear upsampling with fused skips; automatic padding to multiples of 8 |
+| Output | Unbounded residual addition to the complex input | Near-identity residual in logit space, constrained to `[0,1]` |
+
+The matching defaults are the four levels, 48 first-stage channels, depths
+`(1,2,2,1)`, heads `(1,2,4,8)`, expansion 2, three frequency levels, L1
+training, Adam/AdamW at `1e-4`, and an encoder-decoder residual topology. The
+default `portable` model has 11,489,809 parameters and caps FMAM at 256 pooled
+tokens and hash groups at 128 tokens for MPS and Colab GPUs.
+
+`unbounded` removes those two portability caps but is still our adaptation.
+The old preset name `paper_exact` remains only as a checkpoint-compatible alias
+for `unbounded`; it is not source-exact. `tiny` is for plumbing tests, not a
+quality result.
+
+The upstream repository cannot be used directly for Task 3: it has no
+modality/field conditioning or NIfTI translation path. At the pinned revision,
+it also has an unterminated string in `utils/options.py`, imports a missing
+`models_vit.dc_layer`, has no dependency lockfile or Colab notebook, and uses
+device-bound Gaussian tensors that are not registered module buffers. We do
+not vendor or silently patch that repository; its exact commit is recorded as
+reference provenance in new training checkpoints and inference manifests.
 
 ## Environment
 
@@ -178,26 +201,33 @@ submission building, numerical validation, and explicit artifact export.
 Create the source bundle on your Mac from the workspace root:
 
 ```bash
-zip -r task3_fpsformer_colab.zip task3_fpsformer \
+zip -FS -r task3_fpsformer_colab.zip task3_fpsformer \
   -x '*/__pycache__/*' '*.pyc' '*/.DS_Store'
 ```
 
-This packages the current working files, including changes that have not yet
-been committed. Put the zip in Drive, open the notebook in Colab, select a GPU
-runtime, and edit only the path values in step 1 first. The paper PDF is
-optional; if you want it recorded with run provenance, put it in Drive and set
-`DRIVE_PAPER_PDF_VALUE`. `DRIVE_DATA_ROOT_VALUE` must name the parent dataset
-root containing the paired prospective training split—not
-`validation_prospective` itself. The prepared notebook defaults run one
-Colab-safe 10-epoch held-out pilot and export its selected checkpoint. Full
-validation inference, all-subject continuation, submission building, and
-external upload remain disabled.
+This packages the current working files, including uncommitted changes. Open
+the notebook in Colab, select a GPU runtime, and use its default browser-upload
+option to upload this ZIP. Alternatively, put it in Drive, set
+`USE_BROWSER_UPLOAD_FOR_CODE = False`, and edit `DRIVE_CODE_ZIP_VALUE`.
+`DRIVE_DATA_ROOT_VALUE` must name the parent dataset root containing the paired
+prospective training split—not `validation_prospective` itself.
+
+All data staging, audit, cache, training, inference, packaging, and export
+switches default to off. Enable and run one stage at a time. The paid-training
+cell targets 100 epochs x 1,000 updates (100,000 optimizer updates), crop 128,
+batch 1, no worker processes, and fp16. It runs in at most twelve 45-minute
+chunks, saving a resumable checkpoint at an epoch boundary after each chunk.
+This is a substantial run, but still only one third of the paper's 300,000
+updates. Full validation inference, all-subject continuation, submission
+building, and every external upload remain disabled until explicitly selected.
 
 On Colab, stage the cache and an optional resume/initialization checkpoint into
-`/content`, unmount Drive, and train entirely in runtime storage. When the
-process has stopped, copy only the selected checkpoint, metrics, and provenance
-back to Drive. Do not train while reading slices or writing checkpoints on the
-mounted Drive.
+`/content`, unmount Drive, and train entirely in runtime storage. Between
+chunks, after the trainer has stopped, the notebook mounts Drive and copies
+`last.pt`, `best.pt`, provenance, and a metrics snapshot with size and SHA-256
+verification, then unmounts Drive before the next chunk. Resource availability,
+GPU type, and runtime duration are not guaranteed even on paid Colab, so treat
+the chunk limit as a budget rather than a completion promise.
 
 LPIPS is only instantiated when `--loss-lpips` is nonzero or `--eval-lpips` is
 passed. Its AlexNet weights may be downloaded by the `lpips` package on first
@@ -245,22 +275,32 @@ python -m task3_fpsformer.train \
   --baseline-milestone-complete
 ```
 
-For a Colab CUDA pilot:
+For one paid-Colab training chunk (the notebook automates repeated chunks and
+verified Drive backups):
 
 ```bash
 python -m task3_fpsformer.train \
   --cache-dir "$PREPROCESSED_DIR/fpsformer" \
-  --output-dir "$OUTPUT_DIR/fpsformer_portable_pilot" \
+  --output-dir "$OUTPUT_DIR/paid_holdout_100k_01" \
   --preset portable \
   --device cuda \
   --amp fp16 \
   --batch-size 1 \
-  --gradient-accumulation 4 \
-  --crop-size 256 \
-  --epochs 10 \
+  --gradient-accumulation 1 \
+  --crop-size 128 --eval-crop-size 128 \
+  --epochs 100 \
   --updates-per-epoch 1000 \
+  --max-runtime-minutes 45 \
+  --val-samples-per-pair 1 \
+  --workers 0 --progress \
   --baseline-milestone-complete
 ```
+
+Resume with the same target epochs, update count, crop, and run directory by
+adding `--resume "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/last.pt"`.
+Use `--initialize` only once to start a new optimizer and learning-rate schedule
+from the selected 10-epoch held-out model. The notebook checks that an
+initialization or resume checkpoint uses the same held-out subject.
 
 On an Apple Silicon machine, start with `--preset tiny --device mps
 --amp off --crop-size 128`. Only move to `portable` after the smoke run fits.
@@ -268,7 +308,8 @@ On an Apple Silicon machine, start with `--preset tiny --device mps
 The paper trains for 300,000 optimizer updates with AdamW, learning rate
 `1e-4`, a flat first 92,000 updates, then cosine decay to `1e-6`. The matching
 long-run command uses `--epochs 300 --updates-per-epoch 1000`; do not start it
-until the pilot beats an identity mapping on the held-out subject. Metrics in
+until the paid held-out run beats an identity mapping on the held-out subject.
+Metrics in
 `metrics.jsonl` are explicitly slice proxies, not private validation scores.
 
 After selecting settings on the untouched holdout, start a fresh output run
@@ -280,7 +321,7 @@ python -m task3_fpsformer.train \
   --cache-dir "$PREPROCESSED_DIR/fpsformer" \
   --output-dir "$OUTPUT_DIR/fpsformer_all_subjects" \
   --preset portable \
-  --initialize "$OUTPUT_DIR/fpsformer_portable_pilot/checkpoints/best.pt" \
+  --initialize "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
   --holdout-subject none \
   --device cuda --amp fp16 \
   --epochs 10 --updates-per-epoch 1000 \
@@ -293,7 +334,7 @@ First run exactly one full-volume translation:
 
 ```bash
 python -m task3_fpsformer.infer \
-  --checkpoint "$OUTPUT_DIR/fpsformer_portable_pilot/checkpoints/best.pt" \
+  --checkpoint "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
   --input-root "$DATA_DIR" \
   --output-dir "$INFERENCE_DIR/fpsformer_smoke" \
   --device auto \
@@ -304,7 +345,7 @@ Then run the complete resumable 180-volume sweep to a separate directory:
 
 ```bash
 python -m task3_fpsformer.infer \
-  --checkpoint "$OUTPUT_DIR/fpsformer_portable_pilot/checkpoints/best.pt" \
+  --checkpoint "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
   --input-root "$DATA_DIR" \
   --output-dir "$INFERENCE_DIR/fpsformer_full" \
   --device auto \

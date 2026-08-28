@@ -30,7 +30,13 @@ from task3_fpsformer.common import (
     sha256_file,
     utc_now,
 )
-from task3_fpsformer.model import ModelConfig, build_model
+from task3_fpsformer.model import (
+    ARCHITECTURE_ID,
+    UPSTREAM_REPOSITORY,
+    UPSTREAM_REVISION,
+    ModelConfig,
+    build_model,
+)
 from task3_fpsformer.train import load_checkpoint, select_device
 
 
@@ -168,7 +174,9 @@ def predict_volume(
         for start in range(0, moved.shape[0], batch_size):
             stop = min(start + batch_size, moved.shape[0])
             count = stop - start
-            source = torch.from_numpy(moved[start:stop]).unsqueeze(1).to(device)
+            source = torch.from_numpy(
+                np.ascontiguousarray(moved[start:stop])
+            ).unsqueeze(1).to(device)
             modality_tensor = torch.full((count,), modality, dtype=torch.long, device=device)
             source_tensor = torch.full(
                 (count,), source_field, dtype=torch.long, device=device
@@ -296,6 +304,11 @@ def infer(args: argparse.Namespace) -> None:
     model.load_state_dict(checkpoint["model"], strict=True)
     model.eval()
     checkpoint_epoch = int(checkpoint.get("epoch", -1))
+    checkpoint_architecture = checkpoint.get("architecture", ARCHITECTURE_ID)
+    upstream_reference = checkpoint.get(
+        "upstream_reference",
+        {"repository": UPSTREAM_REPOSITORY, "revision": UPSTREAM_REVISION},
+    )
     del checkpoint
 
     volumes = inventory_inputs(
@@ -331,6 +344,8 @@ def infer(args: argparse.Namespace) -> None:
         "created_at_utc": utc_now(),
         "status": "running",
         "paper": PAPER_ID,
+        "architecture": checkpoint_architecture,
+        "upstream_reference": upstream_reference,
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": sha256_file(checkpoint_path),
         "checkpoint_epoch": checkpoint_epoch,

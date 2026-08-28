@@ -203,6 +203,26 @@ def make_cases(
     return cases
 
 
+def select_case_shard(
+    cases: Sequence[InferenceCase], num_shards: int, shard_index: int
+) -> list[InferenceCase]:
+    if num_shards < 1:
+        raise PipelineError("--num-shards must be at least 1")
+    if not 0 <= shard_index < num_shards:
+        raise PipelineError(
+            f"--shard-index must be in [0, {num_shards}); got {shard_index}"
+        )
+    return list(cases[shard_index::num_shards])
+
+
+def shard_manifest_path(output_dir: Path, num_shards: int, shard_index: int) -> Path:
+    if num_shards == 1:
+        return output_dir / "task3_run_manifest.json"
+    return output_dir / (
+        f"task3_run_manifest.shard-{shard_index:02d}-of-{num_shards:02d}.json"
+    )
+
+
 def sha256_file(path: Path, chunk_size: int = 8 * 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -228,17 +248,19 @@ def git_revision(repo: Path) -> str:
     return result.stdout.strip()
 
 
-def verify_official_repo(repo: Path) -> None:
+def verify_official_repo(
+    repo: Path, expected_revision: str = OFFICIAL_GIT_REVISION
+) -> None:
     if not (repo / CONFIG_RELATIVE_PATH).is_file():
         raise PipelineError(f"Official repository/config not found under {repo}")
     try:
         revision = git_revision(repo)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise PipelineError(f"Cannot read the official Git revision at {repo}") from exc
-    if revision != OFFICIAL_GIT_REVISION:
+    if revision != expected_revision:
         raise PipelineError(
             f"Official repository is at {revision}, but this wrapper was checked against "
-            f"{OFFICIAL_GIT_REVISION}. Re-check upstream before changing the pin."
+            f"{expected_revision}. Re-check upstream before changing the pin."
         )
 
 
@@ -253,16 +275,16 @@ def command_fetch_official(args: argparse.Namespace) -> None:
             ["git", "clone", OFFICIAL_REPO_URL, str(destination)], check=True
         )
     subprocess.run(
-        ["git", "-C", str(destination), "fetch", "origin", OFFICIAL_GIT_REVISION],
+        ["git", "-C", str(destination), "fetch", "origin", args.revision],
         check=True,
     )
     subprocess.run(
-        ["git", "-C", str(destination), "checkout", "--detach", OFFICIAL_GIT_REVISION],
+        ["git", "-C", str(destination), "checkout", "--detach", args.revision],
         check=True,
     )
-    verify_official_repo(destination)
+    verify_official_repo(destination, args.revision)
     print(f"Official repository ready: {destination}")
-    print(f"Revision: {OFFICIAL_GIT_REVISION}")
+    print(f"Revision: {args.revision}")
 
 
 def command_download_checkpoint(args: argparse.Namespace) -> None:
@@ -635,30 +657,33 @@ def command_infer(args: argparse.Namespace) -> None:
 
     official_repo = args.official_repo.resolve()
     checkpoint = args.checkpoint.resolve()
-    verify_official_repo(official_repo)
+    verify_official_repo(official_repo, args.official_revision)
     if not checkpoint.is_file():
         raise PipelineError(f"Checkpoint not found: {checkpoint}")
     if args.batch_size < 1:
         raise PipelineError("--batch-size must be at least 1")
 
     volumes = discover_inputs(args.input_root.resolve(), args.modalities)
-    cases = make_cases(
+    all_cases = make_cases(
         volumes,
         args.output_dir.resolve(),
         sweep_mode=args.sweep_mode,
         sweep_epoch=args.sweep_epoch,
     )
     if args.smoke:
-        cases = [
+        if args.num_shards != 1 or args.shard_index != 0:
+            raise PipelineError("--smoke cannot be combined with sharded inference")
+        all_cases = [
             next(
                 case
-                for case in cases
+                for case in all_cases
                 if case.input_volume.modality == args.modalities[0]
                 and case.input_volume.source_field == "0.1T"
                 and case.target_field == "1.5T"
                 and case.input_volume.subject_id == "0001"
             )
         ]
+    cases = select_case_shard(all_cases, args.num_shards, args.shard_index)
 
     device = resolve_device(args.device)
     if device.type == "cpu" and not args.allow_cpu:
@@ -674,12 +699,14 @@ def command_infer(args: argparse.Namespace) -> None:
         torch.cuda.manual_seed_all(args.seed)
 
     started = time.time()
-    manifest_path = args.output_dir.resolve() / "task3_run_manifest.json"
+    manifest_path = shard_manifest_path(
+        args.output_dir.resolve(), args.num_shards, args.shard_index
+    )
     manifest: dict[str, object] = {
         "status": "running",
         "started_at_utc": utc_now(),
         "official_repository": str(official_repo),
-        "official_git_revision": OFFICIAL_GIT_REVISION,
+        "official_git_revision": args.official_revision,
         "checkpoint": str(checkpoint),
         "checkpoint_sha256": sha256_file(checkpoint),
         "checkpoint_origin": (
@@ -703,6 +730,9 @@ def command_infer(args: argparse.Namespace) -> None:
         "batch_size": args.batch_size,
         "smoke": args.smoke,
         "planned_cases": len(cases),
+        "full_planned_cases": len(all_cases),
+        "num_shards": args.num_shards,
+        "shard_index": args.shard_index,
         "completed_cases": [],
     }
     atomic_json(manifest_path, manifest)
@@ -762,6 +792,28 @@ def command_infer(args: argparse.Namespace) -> None:
     print(f"Inference complete. Manifest: {manifest_path}")
 
 
+def validate_cases(cases: Sequence[InferenceCase]) -> list[dict[str, object]]:
+    missing = [str(case.output_path) for case in cases if not case.output_path.is_file()]
+    if missing:
+        raise PipelineError(
+            f"Missing {len(missing)}/{len(cases)} expected outputs. First missing:\n  - "
+            + "\n  - ".join(missing[:10])
+        )
+    reports = []
+    failures = []
+    for index, case in enumerate(cases, start=1):
+        report = validate_prediction(
+            case.output_path, reference_path=case.input_volume.path
+        )
+        reports.append(report)
+        if report["errors"]:
+            failures.append(f"{case.output_path}: " + "; ".join(report["errors"]))
+        print(f"[{index:03d}/{len(cases):03d}] {case.output_path}: " + ("OK" if not report["errors"] else "FAIL"))
+    if failures:
+        raise PipelineError("Output validation failed:\n  - " + "\n  - ".join(failures[:20]))
+    return reports
+
+
 def command_validate_outputs(args: argparse.Namespace) -> None:
     volumes = discover_inputs(args.input_root.resolve(), args.modalities)
     cases = make_cases(
@@ -781,35 +833,140 @@ def command_validate_outputs(args: argparse.Namespace) -> None:
                 and case.input_volume.subject_id == "0001"
             )
         ]
-    missing = [str(case.output_path) for case in cases if not case.output_path.is_file()]
-    if missing:
-        raise PipelineError(
-            f"Missing {len(missing)}/{len(cases)} expected outputs. First missing:\n  - "
-            + "\n  - ".join(missing[:10])
-        )
-    reports = []
-    failures = []
-    for index, case in enumerate(cases, start=1):
-        report = validate_prediction(
-            case.output_path, reference_path=case.input_volume.path
-        )
-        reports.append(report)
-        if report["errors"]:
-            failures.append(f"{case.output_path}: " + "; ".join(report["errors"]))
-        print(f"[{index:03d}/{len(cases):03d}] {case.output_path}: " + ("OK" if not report["errors"] else "FAIL"))
+    reports = validate_cases(cases)
     result = {
         "created_at_utc": utc_now(),
         "kind": "smoke" if args.smoke else "full_volume_inference",
         "modalities": list(args.modalities),
         "expected_files": len(cases),
         "validated_files": len(reports),
-        "failures": failures,
+        "failures": [],
         "files": reports,
     }
     atomic_json(args.report.resolve(), result)
-    if failures:
-        raise PipelineError("Output validation failed:\n  - " + "\n  - ".join(failures[:20]))
     print(f"Validated {len(reports)} outputs. Report: {args.report.resolve()}")
+
+
+def command_finalize_shards(args: argparse.Namespace) -> None:
+    if args.num_shards < 2:
+        raise PipelineError("finalize-shards requires --num-shards of at least 2")
+
+    output_dir = args.output_dir.resolve()
+    volumes = discover_inputs(args.input_root.resolve(), args.modalities)
+    cases = make_cases(
+        volumes,
+        output_dir,
+        sweep_mode=args.sweep_mode,
+        sweep_epoch=args.sweep_epoch,
+    )
+    manifests: list[dict[str, object]] = []
+    manifest_paths: list[Path] = []
+    completed_by_output: dict[str, dict[str, object]] = {}
+    provenance_keys = (
+        "official_git_revision",
+        "checkpoint",
+        "checkpoint_sha256",
+        "checkpoint_origin",
+        "huggingface_repository",
+        "huggingface_revision",
+        "config",
+        "input_root",
+        "output_dir",
+        "sweep_mode",
+        "sweep_epoch",
+        "modalities",
+        "torch_version",
+        "cuda_version",
+        "seed",
+        "batch_size",
+        "smoke",
+    )
+
+    for shard_index in range(args.num_shards):
+        path = shard_manifest_path(output_dir, args.num_shards, shard_index)
+        if not path.is_file():
+            raise PipelineError(f"Missing shard manifest: {path}")
+        manifest = json.loads(path.read_text())
+        expected_cases = select_case_shard(cases, args.num_shards, shard_index)
+        expected_outputs = [str(case.output_path) for case in expected_cases]
+        completed = manifest.get("completed_cases")
+        completed_outputs = (
+            [str(item.get("output")) for item in completed]
+            if isinstance(completed, list)
+            and all(isinstance(item, dict) for item in completed)
+            else []
+        )
+        checks = {
+            "status": manifest.get("status") == "complete",
+            "not_smoke": manifest.get("smoke") is False,
+            "num_shards": manifest.get("num_shards") == args.num_shards,
+            "shard_index": manifest.get("shard_index") == shard_index,
+            "planned_cases": manifest.get("planned_cases") == len(expected_cases),
+            "full_planned_cases": manifest.get("full_planned_cases") == len(cases),
+            "modalities": manifest.get("modalities") == list(args.modalities),
+            "sweep_mode": manifest.get("sweep_mode") == args.sweep_mode,
+            "sweep_epoch": manifest.get("sweep_epoch") == args.sweep_epoch,
+            "completed_outputs": completed_outputs == expected_outputs,
+        }
+        failures = [name for name, passed in checks.items() if not passed]
+        if failures:
+            raise PipelineError(
+                f"Invalid shard manifest {path}; failed: " + ", ".join(failures)
+            )
+        if manifests:
+            mismatched = [
+                key
+                for key in provenance_keys
+                if manifest.get(key) != manifests[0].get(key)
+            ]
+            if mismatched:
+                raise PipelineError(
+                    f"Shard provenance differs in {path}: " + ", ".join(mismatched)
+                )
+        for item in completed:
+            output = str(item["output"])
+            if output in completed_by_output:
+                raise PipelineError(f"Duplicate output across shard manifests: {output}")
+            completed_by_output[output] = item
+        manifests.append(manifest)
+        manifest_paths.append(path)
+
+    expected_outputs = [str(case.output_path) for case in cases]
+    if set(completed_by_output) != set(expected_outputs):
+        raise PipelineError("Shard manifests do not cover the complete planned sweep")
+
+    reports = validate_cases(cases)
+    report = {
+        "created_at_utc": utc_now(),
+        "kind": "full_volume_inference",
+        "modalities": list(args.modalities),
+        "expected_files": len(cases),
+        "validated_files": len(reports),
+        "failures": [],
+        "files": reports,
+    }
+    atomic_json(args.report.resolve(), report)
+
+    combined = dict(manifests[0])
+    combined.update(
+        status="complete",
+        completed_at_utc=utc_now(),
+        elapsed_seconds=max(float(item["elapsed_seconds"]) for item in manifests),
+        planned_cases=len(cases),
+        full_planned_cases=len(cases),
+        num_shards=args.num_shards,
+        completed_cases=[completed_by_output[output] for output in expected_outputs],
+        devices=[item.get("device") for item in manifests],
+        gpu_names=[item.get("gpu_name") for item in manifests],
+        worker_elapsed_seconds=[item.get("elapsed_seconds") for item in manifests],
+        worker_manifests=[str(path) for path in manifest_paths],
+        finalized_at_utc=utc_now(),
+    )
+    combined.pop("shard_index", None)
+    canonical_manifest = output_dir / "task3_run_manifest.json"
+    atomic_json(canonical_manifest, combined)
+    print(f"Validated {len(reports)} outputs. Report: {args.report.resolve()}")
+    print(f"Finalized dual-GPU manifest: {canonical_manifest}")
 
 
 def add_modalities(parser: argparse.ArgumentParser) -> None:
@@ -851,6 +1008,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch = subparsers.add_parser("fetch-official", help="clone and pin organizer code")
     fetch.add_argument("--destination", type=Path, default=Path("official/MRIxFields2026"))
+    fetch.add_argument("--revision", default=OFFICIAL_GIT_REVISION)
     fetch.set_defaults(func=command_fetch_official)
 
     download = subparsers.add_parser("download-checkpoint", help="download only Task 3 weights")
@@ -879,6 +1037,7 @@ def build_parser() -> argparse.ArgumentParser:
     infer.add_argument("--input-root", type=Path, required=True)
     infer.add_argument("--output-dir", type=Path, default=Path("runs/inference"))
     infer.add_argument("--official-repo", type=Path, default=Path("official/MRIxFields2026"))
+    infer.add_argument("--official-revision", default=OFFICIAL_GIT_REVISION)
     infer.add_argument(
         "--checkpoint",
         type=Path,
@@ -889,6 +1048,8 @@ def build_parser() -> argparse.ArgumentParser:
     infer.add_argument("--device", default="auto", help="auto, cuda, cuda:0, mps, or cpu")
     infer.add_argument("--batch-size", type=int, default=1)
     infer.add_argument("--seed", type=int, default=20260712)
+    infer.add_argument("--num-shards", type=int, default=1)
+    infer.add_argument("--shard-index", type=int, default=0)
     infer.add_argument(
         "--smoke",
         action="store_true",
@@ -909,6 +1070,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--report", type=Path, default=Path("runs/output_validation.json")
     )
     validate.set_defaults(func=command_validate_outputs)
+
+    finalize = subparsers.add_parser(
+        "finalize-shards",
+        help="verify worker manifests and all outputs, then write the canonical manifest",
+    )
+    finalize.add_argument("--input-root", type=Path, required=True)
+    finalize.add_argument("--output-dir", type=Path, default=Path("runs/inference"))
+    finalize.add_argument("--num-shards", type=int, required=True)
+    add_modalities(finalize)
+    add_sweep_coordinates(finalize)
+    finalize.add_argument(
+        "--report", type=Path, default=Path("runs/output_validation.json")
+    )
+    finalize.set_defaults(func=command_finalize_shards)
 
     return parser
 

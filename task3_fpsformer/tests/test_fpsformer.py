@@ -101,7 +101,40 @@ class DataTests(unittest.TestCase):
 
 
 @unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch is not installed")
+class TrainingControlTests(unittest.TestCase):
+    def test_runtime_budget_is_disabled_by_zero_and_trips_at_limit(self) -> None:
+        from task3_fpsformer.train import runtime_budget_exhausted
+
+        self.assertFalse(runtime_budget_exhausted(10_000, 0))
+        self.assertFalse(runtime_budget_exhausted(599, 10))
+        self.assertTrue(runtime_budget_exhausted(600, 10))
+
+
+@unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch is not installed")
 class TorchModelTests(unittest.TestCase):
+    def test_predict_volume_accepts_negative_numpy_strides(self) -> None:
+        import torch
+
+        from task3_fpsformer.infer import predict_volume
+
+        class IdentityModel(torch.nn.Module):
+            def forward(self, source, modality, source_field, target_field):
+                return source
+
+        volume = np.linspace(0.0, 1.0, 60, dtype=np.float32).reshape(4, 5, 3)[::-1]
+        self.assertTrue(any(stride < 0 for stride in volume.strides))
+        prediction = predict_volume(
+            IdentityModel(),
+            volume,
+            modality=0,
+            source_field=0,
+            target_field=1,
+            batch_size=2,
+            device=torch.device("cpu"),
+            amp="off",
+        )
+        np.testing.assert_array_equal(prediction, volume)
+
     def test_tiny_model_preserves_shape_and_initializes_near_identity(self) -> None:
         import torch
 

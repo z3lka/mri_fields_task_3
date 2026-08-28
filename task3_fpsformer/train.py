@@ -49,7 +49,14 @@ from task3_fpsformer.losses import (
     OptionalLPIPS,
     TranslationLoss,
 )
-from task3_fpsformer.model import ModelConfig, build_model, count_parameters
+from task3_fpsformer.model import (
+    ARCHITECTURE_ID,
+    UPSTREAM_REPOSITORY,
+    UPSTREAM_REVISION,
+    ModelConfig,
+    build_model,
+    count_parameters,
+)
 
 
 class AmpController:
@@ -285,7 +292,12 @@ def checkpoint_payload(
 ) -> dict[str, Any]:
     return {
         "format": "task3_conditional_fpsformer_v1",
+        "architecture": ARCHITECTURE_ID,
         "paper": PAPER_ID,
+        "upstream_reference": {
+            "repository": UPSTREAM_REPOSITORY,
+            "revision": UPSTREAM_REVISION,
+        },
         "model_config": model_config.to_dict(),
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -319,6 +331,10 @@ def require_acknowledgement(args: argparse.Namespace) -> None:
         )
 
 
+def runtime_budget_exhausted(elapsed_seconds: float, max_runtime_minutes: float) -> bool:
+    return max_runtime_minutes > 0 and elapsed_seconds >= max_runtime_minutes * 60
+
+
 def train(args: argparse.Namespace) -> None:
     require_acknowledgement(args)
     if args.epochs < 1 or args.batch_size < 1 or args.gradient_accumulation < 1:
@@ -327,6 +343,8 @@ def train(args: argparse.Namespace) -> None:
         raise FPSFormerError("--flat-fraction must be in [0,1)")
     if args.min_lr <= 0 or args.min_lr > args.lr:
         raise FPSFormerError("--min-lr must be positive and no greater than --lr")
+    if args.max_runtime_minutes < 0:
+        raise FPSFormerError("--max-runtime-minutes cannot be negative")
 
     seed_everything(args.seed)
     device = select_device(args.device)
@@ -447,7 +465,14 @@ def train(args: argparse.Namespace) -> None:
     provenance = {
         "kind": "task3_conditional_fpsformer_training",
         "created_at_utc": utc_now(),
+        "status": "running",
+        "target_epochs": args.epochs,
         "paper": PAPER_ID,
+        "architecture": ARCHITECTURE_ID,
+        "upstream_reference": {
+            "repository": UPSTREAM_REPOSITORY,
+            "revision": UPSTREAM_REVISION,
+        },
         "paper_pdf": str(paper_path) if paper_path.is_file() else None,
         "paper_sha256": sha256_file(paper_path) if paper_path.is_file() else None,
         "workspace_revision": git_revision(Path(__file__).resolve().parent),
@@ -471,7 +496,7 @@ def train(args: argparse.Namespace) -> None:
         "attention_note": (
             "Quadratic attention is bounded for portability."
             if model_config.max_frequency_tokens or model_config.max_spam_group_tokens
-            else "Unbounded paper-exact attention requested."
+            else "Unbounded Task 3 adaptation requested."
         ),
         "metric_note": "Holdout values are slice proxies, not private validation scores.",
     }
@@ -480,6 +505,7 @@ def train(args: argparse.Namespace) -> None:
 
     metrics_path = output_dir / "metrics.jsonl"
     started = time.monotonic()
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -587,7 +613,30 @@ def train(args: argparse.Namespace) -> None:
         atomic_torch_save(payload, checkpoints_dir / "last.pt")
         if improved or validation_loader is None:
             atomic_torch_save(payload, checkpoints_dir / "best.pt")
-    print(f"Training complete. Checkpoints: {checkpoints_dir}")
+        last_epoch = epoch + 1
+        elapsed_seconds = time.monotonic() - started
+        if last_epoch < args.epochs and runtime_budget_exhausted(
+            elapsed_seconds, args.max_runtime_minutes
+        ):
+            print(
+                f"Runtime budget reached after epoch {last_epoch}; "
+                f"resume from {checkpoints_dir / 'last.pt'}"
+            )
+            break
+
+    complete = last_epoch >= args.epochs
+    provenance.update(
+        {
+            "status": "complete" if complete else "paused_runtime_budget",
+            "finished_at_utc": utc_now(),
+            "last_epoch": last_epoch,
+            "global_step": global_step,
+            "elapsed_seconds": time.monotonic() - started,
+        }
+    )
+    atomic_json(output_dir / "provenance.json", provenance)
+    state = "complete" if complete else "paused safely"
+    print(f"Training {state}. Checkpoints: {checkpoints_dir}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -596,7 +645,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--preset", choices=("portable", "tiny", "paper_exact"), default="portable")
+    parser.add_argument(
+        "--preset",
+        choices=("portable", "tiny", "unbounded", "paper_exact"),
+        default="portable",
+        help="paper_exact is a legacy alias for unbounded; neither is source-exact",
+    )
     parser.add_argument("--base-channels", type=int)
     parser.add_argument("--max-frequency-tokens", type=int)
     parser.add_argument("--max-spam-group-tokens", type=int)
@@ -610,6 +664,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--crop-size", type=int, default=256, help="0 uses full 364x436 slices")
     parser.add_argument("--eval-crop-size", type=int, default=0, help="0 evaluates full slices")
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument(
+        "--max-runtime-minutes",
+        type=float,
+        default=0,
+        help="Pause safely at an epoch boundary after this many minutes; 0 disables",
+    )
     parser.add_argument(
         "--updates-per-epoch",
         type=int,

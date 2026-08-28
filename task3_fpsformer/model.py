@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Conditional FPS-Former backbone adapted to MRIxFields2026 Task 3.
+"""Conditional FPS-Former-inspired backbone adapted to MRIxFields2026 Task 3.
 
-The implementation follows arXiv:2412.10776v1:
+This implementation was built from the paper without using the authors'
+released source and is not a line-for-line port. It retains the paper's main
+design ideas:
 
 * a four-level hierarchical encoder/decoder;
 * frequency modulation attention (FMAM) from a Gaussian/Laplacian pyramid;
@@ -12,10 +14,10 @@ The implementation follows arXiv:2412.10776v1:
 Task 3 is image-to-image field translation, not undersampled k-space
 reconstruction.  Consequently, the paper's k-space data-consistency layer is
 not applicable.  A single shared network is instead conditioned on modality,
-source field, and target field.  For practical full-resolution training,
-``portable`` bounds the quadratic attention token counts while retaining the
-paper's content grouping.  ``paper_exact`` removes those bounds and can require
-substantially more than Colab-class memory.
+source field, and target field. For practical full-resolution training,
+``portable`` bounds the quadratic attention token counts. ``unbounded`` removes
+those bounds but still uses this Task 3 adaptation, not the authors'
+reconstruction implementation.
 """
 
 from __future__ import annotations
@@ -29,6 +31,11 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from task3_fpsformer.common import FIELDS, MODALITIES, NUM_DOMAINS, FPSFormerError
+
+
+UPSTREAM_REPOSITORY = "https://github.com/XiaoMengLiLiLi/FPS-Former"
+UPSTREAM_REVISION = "166d10d6e045b155b452fb26622b6b22063f82f5"
+ARCHITECTURE_ID = "task3_fpsformer_adaptation_v1"
 
 
 def _valid_heads(channels: int, heads: int) -> None:
@@ -448,7 +455,7 @@ class ModelConfig:
     def preset(cls, name: str) -> "ModelConfig":
         if name == "portable":
             return cls()
-        if name == "paper_exact":
+        if name in {"unbounded", "paper_exact"}:
             return cls(max_frequency_tokens=0, max_spam_group_tokens=0)
         if name == "tiny":
             return cls(

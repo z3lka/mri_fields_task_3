@@ -29,6 +29,13 @@ class FPSFormerColabNotebookTests(unittest.TestCase):
         notebook = load_notebook()
         self.assertEqual(notebook["nbformat"], 4)
         self.assertEqual(notebook["metadata"]["kernelspec"]["language"], "python")
+        self.assertTrue(
+            all(
+                cell.get("execution_count") is None and not cell.get("outputs")
+                for cell in notebook["cells"]
+                if cell.get("cell_type") == "code"
+            )
+        )
         for index, source in enumerate(code_cells(notebook)):
             ast.parse(source, filename=f"{NOTEBOOK.name}:code-cell-{index}")
 
@@ -87,9 +94,9 @@ class FPSFormerColabNotebookTests(unittest.TestCase):
         ]
         self.assertEqual(staging, [2])
         self.assertEqual(exporting, [len(cells) - 1])
-        self.assertEqual(sum(source.count("drive.mount(") for source in cells), 2)
+        self.assertEqual(sum(source.count("drive.mount(") for source in cells), 3)
         self.assertEqual(
-            sum(source.count("drive.flush_and_unmount()") for source in cells), 2
+            sum(source.count("drive.flush_and_unmount()") for source in cells), 3
         )
         self.assertIn("drive.mount(str(DRIVE_MOUNT))", cells[0])
         self.assertIn("drive.flush_and_unmount()", cells[staging[0]])
@@ -104,7 +111,7 @@ class FPSFormerColabNotebookTests(unittest.TestCase):
             "if RUN_CACHE_PREPARATION:",
             "if RUN_CACHE_AUDIT:",
             "if RUN_TINY_SMOKE:",
-            "if RUN_PORTABLE_PILOT:",
+            "if RUN_PAID_TRAINING:",
             "if RUN_ALL_SUBJECT_CONTINUATION:",
             "if RUN_VALIDATION_SMOKE:",
             "if RUN_FULL_VALIDATION:",
@@ -127,52 +134,65 @@ class FPSFormerColabNotebookTests(unittest.TestCase):
         self.assertIn("'--workers', '0'", smoke)
         self.assertIn("'--progress'", smoke)
 
-    def test_ten_epoch_training_is_colab_safe_and_has_progress(self):
+    def test_paid_training_is_chunked_resumable_and_backed_up(self):
         cells = code_cells(load_notebook())
-        pilot = next(source for source in cells if "if RUN_PORTABLE_PILOT:" in source)
+        paid = next(source for source in cells if "if RUN_PAID_TRAINING:" in source)
         continuation = next(
             source for source in cells if "if RUN_ALL_SUBJECT_CONTINUATION:" in source
         )
-        self.assertIn("PILOT_EPOCHS = 10", pilot)
-        self.assertIn("PILOT_UPDATES_PER_EPOCH = 100", pilot)
-        self.assertIn("'--gradient-accumulation', '1'", pilot)
-        self.assertIn("'--crop-size', '128'", pilot)
-        self.assertIn("'--eval-crop-size', '128'", pilot)
-        self.assertIn("'--val-samples-per-pair', '1'", pilot)
-        self.assertIn("'--workers', '0'", pilot)
-        self.assertIn("'--progress'", pilot)
+        self.assertIn("PAID_START_MODE = 'initialize'", paid)
+        self.assertIn("PAID_TARGET_EPOCHS = 100", paid)
+        self.assertIn("PAID_UPDATES_PER_EPOCH = 1000", paid)
+        self.assertIn("PAID_CHUNK_MINUTES = 45", paid)
+        self.assertIn("PAID_MAX_CHUNKS = 12", paid)
+        self.assertIn("PAID_CROP_SIZE = 128", paid)
+        self.assertIn("'--max-runtime-minutes'", paid)
+        self.assertIn("'--gradient-accumulation', '1'", paid)
+        self.assertIn("'--val-samples-per-pair', '1'", paid)
+        self.assertIn("'--workers', '0'", paid)
+        self.assertIn("'--progress'", paid)
+        self.assertIn("checkpoint_metadata.get('holdout_subject') != expected_holdout", paid)
+        self.assertIn("sha256_stream(temporary) != source_hash", paid)
+        self.assertIn("drive.mount(str(DRIVE_MOUNT))", paid)
+        self.assertIn("drive.flush_and_unmount()", paid)
+        self.assertLess(
+            paid.index("subprocess.check_call(command)"),
+            paid.rindex("backup_paid_run(completed_epoch, completed_step)"),
+        )
         self.assertIn("ALL_SUBJECT_EPOCHS = 10", continuation)
         self.assertIn("ALL_SUBJECT_UPDATES_PER_EPOCH = 100", continuation)
         self.assertIn("'--gradient-accumulation', '1'", continuation)
         self.assertIn("'--crop-size', '128'", continuation)
+        self.assertIn("str(ALL_SUBJECT_UPDATES_PER_EPOCH)", continuation)
         self.assertIn("'--workers', '0'", continuation)
         self.assertIn("'--progress'", continuation)
 
-    def test_defaults_run_only_the_requested_ten_epoch_training_workflow(self):
+    def test_expensive_defaults_are_opt_in(self):
         text = "\n".join(code_cells(load_notebook()))
         for assignment in (
-            "STAGE_TRAINING_DATA = True",
+            "USE_BROWSER_UPLOAD_FOR_CODE = True",
             "RUN_PACKAGE_TESTS = True",
-            "RUN_RAW_AUDIT = True",
-            "RUN_CACHE_PREPARATION = True",
-            "RUN_CACHE_AUDIT = True",
-            "BASELINE_MILESTONE_COMPLETE = True",
-            "RUN_TINY_SMOKE = True",
-            "RUN_PORTABLE_PILOT = True",
-            "EXPORT_SELECTED_ARTIFACTS = True",
+            "PAID_BACKUP_TO_DRIVE = True",
             "EXPORT_CHECKPOINT = True",
         ):
             self.assertIn(assignment, text)
         for assignment in (
+            "STAGE_TRAINING_DATA = False",
             "STAGE_VALIDATION_DATA = False",
             "STAGE_INITIAL_CHECKPOINT = False",
-            "RESUME_PORTABLE_PILOT = False",
+            "RUN_RAW_AUDIT = False",
+            "RUN_CACHE_PREPARATION = False",
+            "RUN_CACHE_AUDIT = False",
+            "BASELINE_MILESTONE_COMPLETE = False",
+            "RUN_TINY_SMOKE = False",
+            "RUN_PAID_TRAINING = False",
             "RUN_ALL_SUBJECT_CONTINUATION = False",
             "RUN_VALIDATION_SMOKE = False",
             "RUN_FULL_VALIDATION = False",
             "PREPARE_OFFICIAL_REPO = False",
             "LIVE_RULES_REVIEWED = False",
             "BUILD_TASK3_ZIP = False",
+            "EXPORT_SELECTED_ARTIFACTS = False",
             "EXPORT_ARCHIVE = False",
         ):
             self.assertIn(assignment, text)

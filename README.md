@@ -84,8 +84,8 @@ export. See TASK3_TRAINING_COLAB.md for experiment constraints.
 
 ## Conditional FPS-Former experiment
 
-The paper-based replacement model is implemented entirely in the
-`task3_fpsformer/` Python package; it does not use a notebook:
+The paper-inspired replacement model is implemented entirely in the
+`task3_fpsformer/` Python package and has a guided Colab notebook:
 
 - `task3_fpsformer/data.py`: paired prospective audit and slice cache;
 - `task3_fpsformer/model.py`: FMAM, SPAM, SDFN, HEFR, and one shared
@@ -94,9 +94,9 @@ The paper-based replacement model is implemented entirely in the
   CUDA; and
 - `task3_fpsformer/infer.py`: smoke or complete 180-volume validation sweep.
 
-See `task3_fpsformer/README.md` for the paper-to-Task-3 adaptation, known
-departures from the unpublished reference implementation, and exact Mac/Colab
-commands.
+See `task3_fpsformer/README.md` for the comparison with the now-released source
+(pinned to `166d10d6e045b155b452fb26622b6b22063f82f5`), the deliberate Task 3
+departures, and exact Mac/Colab commands.
 
 ## Reproducibility pins
 

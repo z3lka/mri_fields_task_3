@@ -68,6 +68,25 @@ class Task3PipelineTests(unittest.TestCase):
         self.assertEqual(len(cases), 180)
         self.assertEqual({case.target_domain for case in cases}, set(range(15)))
 
+    def test_two_shards_are_balanced_disjoint_and_complete(self):
+        cases = list(range(180))
+        first = pipeline.select_case_shard(cases, 2, 0)
+        second = pipeline.select_case_shard(cases, 2, 1)
+        self.assertEqual(len(first), 90)
+        self.assertEqual(len(second), 90)
+        self.assertFalse(set(first) & set(second))
+        self.assertEqual(set(first) | set(second), set(cases))
+        self.assertEqual(
+            pipeline.shard_manifest_path(Path("runs"), 2, 1),
+            Path("runs/task3_run_manifest.shard-01-of-02.json"),
+        )
+
+    def test_rejects_invalid_shard_coordinates(self):
+        with self.assertRaises(pipeline.PipelineError):
+            pipeline.select_case_shard([], 0, 0)
+        with self.assertRaises(pipeline.PipelineError):
+            pipeline.select_case_shard([], 2, 2)
+
     def test_custom_sweep_coordinates_keep_candidate_outputs_separate(self):
         volume = pipeline.InputVolume(
             Path("T2W/3T/P_T2W_3T_0010.nii.gz"), "T2W", "3T", "0010"
