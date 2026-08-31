@@ -9,6 +9,7 @@ pair: all 60 (modality, source, target) strata update the same parameters.
 from __future__ import annotations
 
 import argparse
+import copy
 import contextlib
 import json
 import math
@@ -214,12 +215,19 @@ def build_validation_loader(
     dataset: ProspectivePairDataset,
     *,
     samples_per_pair: int,
+    slice_start: int | None,
+    slice_end: int | None,
     batch_size: int,
     workers: int,
     seed: int,
     device: torch.device,
 ) -> DataLoader:
-    subset = dataset.balanced_subset(samples_per_pair, seed=seed)
+    subset = dataset.balanced_subset(
+        samples_per_pair,
+        seed=seed,
+        slice_start=slice_start,
+        slice_end=slice_end,
+    )
     return DataLoader(
         subset,
         batch_size=batch_size,
@@ -281,6 +289,7 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 def checkpoint_payload(
     *,
     model: torch.nn.Module,
+    model_ema: torch.nn.Module,
     optimizer: AdamW,
     scheduler: LambdaLR,
     model_config: ModelConfig,
@@ -300,6 +309,7 @@ def checkpoint_payload(
         },
         "model_config": model_config.to_dict(),
         "model": model.state_dict(),
+        "model_ema": model_ema.state_dict(),
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict(),
         "epoch": epoch,
@@ -335,6 +345,16 @@ def runtime_budget_exhausted(elapsed_seconds: float, max_runtime_minutes: float)
     return max_runtime_minutes > 0 and elapsed_seconds >= max_runtime_minutes * 60
 
 
+@torch.no_grad()
+def update_ema(ema_model: torch.nn.Module, model: torch.nn.Module, beta: float) -> None:
+    if not 0.0 <= beta < 1.0:
+        raise FPSFormerError("--ema-beta must be in [0,1)")
+    for ema_parameter, parameter in zip(ema_model.parameters(), model.parameters()):
+        ema_parameter.lerp_(parameter.detach(), 1.0 - beta)
+    for ema_buffer, buffer in zip(ema_model.buffers(), model.buffers()):
+        ema_buffer.copy_(buffer.detach())
+
+
 def train(args: argparse.Namespace) -> None:
     require_acknowledgement(args)
     if args.epochs < 1 or args.batch_size < 1 or args.gradient_accumulation < 1:
@@ -345,6 +365,14 @@ def train(args: argparse.Namespace) -> None:
         raise FPSFormerError("--min-lr must be positive and no greater than --lr")
     if args.max_runtime_minutes < 0:
         raise FPSFormerError("--max-runtime-minutes cannot be negative")
+    if (args.val_slice_start is None) != (args.val_slice_end is None):
+        raise FPSFormerError("--val-slice-start and --val-slice-end must be used together")
+    if args.val_slice_start is not None and args.val_slice_start >= args.val_slice_end:
+        raise FPSFormerError("Validation slice range must satisfy start < end")
+    if not 0.0 <= args.left_right_flip_probability <= 1.0:
+        raise FPSFormerError("--left-right-flip-probability must be in [0,1]")
+    if not 0.0 <= args.ema_beta < 1.0:
+        raise FPSFormerError("--ema-beta must be in [0,1)")
 
     seed_everything(args.seed)
     device = select_device(args.device)
@@ -373,6 +401,7 @@ def train(args: argparse.Namespace) -> None:
         exclude_subjects={holdout_subject} if holdout_subject else None,
         crop_size=crop_size,
         random_crop=True,
+        left_right_flip_probability=args.left_right_flip_probability,
     )
     train_loader = build_train_loader(
         train_dataset,
@@ -399,6 +428,8 @@ def train(args: argparse.Namespace) -> None:
         validation_loader = build_validation_loader(
             validation_dataset,
             samples_per_pair=args.val_samples_per_pair,
+            slice_start=args.val_slice_start,
+            slice_end=args.val_slice_end,
             batch_size=args.eval_batch_size,
             workers=args.workers,
             seed=args.seed,
@@ -413,14 +444,20 @@ def train(args: argparse.Namespace) -> None:
         initial_config = ModelConfig.from_dict(initial_checkpoint["model_config"])
         if initial_config != model_config:
             raise FPSFormerError("Initialization checkpoint model configuration differs from CLI")
-        model.load_state_dict(initial_checkpoint["model"], strict=True)
+        initialization_weights = (
+            "model_ema" if "model_ema" in initial_checkpoint else "model"
+        )
+        model.load_state_dict(initial_checkpoint[initialization_weights], strict=True)
         initialization = {
             "path": str(initialization_path),
             "sha256": sha256_file(initialization_path),
             "source_epoch": int(initial_checkpoint.get("epoch", -1)),
+            "weights": initialization_weights,
             "weights_only": True,
         }
         del initial_checkpoint
+    model_ema = copy.deepcopy(model).eval()
+    model_ema.requires_grad_(False)
     objective = TranslationLoss(
         LossWeights(args.loss_l1, args.loss_ssim, args.loss_edge, args.loss_lpips)
     ).to(device)
@@ -453,6 +490,9 @@ def train(args: argparse.Namespace) -> None:
         if saved_config != model_config:
             raise FPSFormerError("Resume checkpoint model configuration differs from CLI")
         model.load_state_dict(checkpoint["model"], strict=True)
+        model_ema.load_state_dict(
+            checkpoint.get("model_ema", checkpoint["model"]), strict=True
+        )
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
         start_epoch = int(checkpoint["epoch"])
@@ -552,6 +592,7 @@ def train(args: argparse.Namespace) -> None:
                 amp.scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
+                update_ema(model_ema, model, args.ema_beta)
                 global_step += 1
                 divisor = max(1, micro_count)
                 epoch_progress.set_postfix(
@@ -584,7 +625,7 @@ def train(args: argparse.Namespace) -> None:
         improved = False
         if validation_loader is not None and (epoch + 1) % args.eval_every == 0:
             record["holdout"] = validate(
-                model,
+                model_ema,
                 validation_loader,
                 device,
                 amp,
@@ -601,6 +642,7 @@ def train(args: argparse.Namespace) -> None:
 
         payload = checkpoint_payload(
             model=model,
+            model_ema=model_ema,
             optimizer=optimizer,
             scheduler=scheduler,
             model_config=model_config,
@@ -681,12 +723,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--flat-fraction", type=float, default=92_000 / 300_000)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--clip-grad-norm", type=float, default=1.0)
+    parser.add_argument("--ema-beta", type=float, default=0.999)
+    parser.add_argument("--left-right-flip-probability", type=float, default=0.0)
     parser.add_argument("--loss-l1", type=float, default=1.0)
     parser.add_argument("--loss-ssim", type=float, default=0.0)
     parser.add_argument("--loss-edge", type=float, default=0.0)
     parser.add_argument("--loss-lpips", type=float, default=0.0)
     parser.add_argument("--holdout-subject", default="auto")
     parser.add_argument("--val-samples-per-pair", type=int, default=2)
+    parser.add_argument("--val-slice-start", type=int)
+    parser.add_argument("--val-slice-end", type=int)
     parser.add_argument("--eval-every", type=int, default=1)
     parser.add_argument("--eval-lpips", action="store_true")
     parser.add_argument("--print-every", type=int, default=50)

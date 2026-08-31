@@ -301,7 +301,8 @@ def infer(args: argparse.Namespace) -> None:
         raise FPSFormerError(f"Unexpected checkpoint format: {checkpoint.get('format')!r}")
     config = ModelConfig.from_dict(checkpoint["model_config"])
     model = build_model(config).to(device)
-    model.load_state_dict(checkpoint["model"], strict=True)
+    weights_key = "model_ema" if "model_ema" in checkpoint else "model"
+    model.load_state_dict(checkpoint[weights_key], strict=True)
     model.eval()
     checkpoint_epoch = int(checkpoint.get("epoch", -1))
     checkpoint_architecture = checkpoint.get("architecture", ARCHITECTURE_ID)
@@ -349,6 +350,7 @@ def infer(args: argparse.Namespace) -> None:
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": sha256_file(checkpoint_path),
         "checkpoint_epoch": checkpoint_epoch,
+        "checkpoint_weights": weights_key,
         "model_config": config.to_dict(),
         "device": str(device),
         "input_root": str(resolve_validation_root(args.input_root)),

@@ -202,7 +202,8 @@ Create the source bundle on your Mac from the workspace root:
 
 ```bash
 zip -FS -r task3_fpsformer_colab.zip task3_fpsformer \
-  -x '*/__pycache__/*' '*.pyc' '*/.DS_Store'
+  -x '*/__pycache__/*' '*.pyc' '*/.DS_Store' \
+  'task3_fpsformer/task3_fpsformer_colab-2.ipynb'
 ```
 
 This packages the current working files, including uncommitted changes. Open
@@ -213,13 +214,13 @@ option to upload this ZIP. Alternatively, put it in Drive, set
 prospective training split—not `validation_prospective` itself.
 
 All data staging, audit, cache, training, inference, packaging, and export
-switches default to off. Enable and run one stage at a time. The paid-training
-cell targets 100 epochs x 1,000 updates (100,000 optimizer updates), crop 128,
-batch 1, no worker processes, and fp16. It runs in at most twelve 45-minute
-chunks, saving a resumable checkpoint at an epoch boundary after each chunk.
-This is a substantial run, but still only one third of the paper's 300,000
-updates. Full validation inference, all-subject continuation, submission
-building, and every external upload remain disabled until explicitly selected.
+switches default to off. Enable and run one stage at a time. The A100 training
+recipe targets 100 epochs x 1,000 updates with batch 16, crop 256, bf16, paired
+left-right augmentation, EMA weights, and a larger full-slice holdout sample.
+It runs in at most twelve 45-minute chunks, saving a resumable checkpoint at an
+epoch boundary after each chunk. Full validation inference, all-subject
+continuation, submission building, and every external upload remain disabled
+until explicitly selected.
 
 On Colab, stage the cache and an optional resume/initialization checkpoint into
 `/content`, unmount Drive, and train entirely in runtime storage. Between
@@ -231,7 +232,10 @@ the chunk limit as a budget rather than a completion promise.
 
 LPIPS is only instantiated when `--loss-lpips` is nonzero or `--eval-lpips` is
 passed. Its AlexNet weights may be downloaded by the `lpips` package on first
-use. The paper's exact training objective is L1, which is the default here.
+use. The paper's exact training objective is L1, which remains the CLI default;
+the competition recipe adds the organizer's `0.1 * LPIPS` fine-tuning term.
+New checkpoints contain both online and EMA weights. Initialization and
+inference prefer EMA weights, while older checkpoints remain supported.
 
 ## Data preparation
 
@@ -281,25 +285,28 @@ verified Drive backups):
 ```bash
 python -m task3_fpsformer.train \
   --cache-dir "$PREPROCESSED_DIR/fpsformer" \
-  --output-dir "$OUTPUT_DIR/paid_holdout_100k_01" \
+  --output-dir "$OUTPUT_DIR/a100_holdout_ema_01" \
   --preset portable \
   --device cuda \
-  --amp fp16 \
-  --batch-size 1 \
+  --amp bf16 \
+  --batch-size 16 --eval-batch-size 4 \
   --gradient-accumulation 1 \
-  --crop-size 128 --eval-crop-size 128 \
+  --crop-size 256 --eval-crop-size 0 \
   --epochs 100 \
   --updates-per-epoch 1000 \
   --max-runtime-minutes 45 \
-  --val-samples-per-pair 1 \
-  --workers 0 --progress \
+  --val-samples-per-pair 30 \
+  --val-slice-start 150 --val-slice-end 180 --eval-every 5 \
+  --left-right-flip-probability 0.5 \
+  --ema-beta 0.999 --loss-lpips 0.1 --eval-lpips \
+  --workers 4 --progress \
   --baseline-milestone-complete
 ```
 
 Resume with the same target epochs, update count, crop, and run directory by
-adding `--resume "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/last.pt"`.
+adding `--resume "$OUTPUT_DIR/a100_holdout_ema_01/checkpoints/last.pt"`.
 Use `--initialize` only once to start a new optimizer and learning-rate schedule
-from the selected 10-epoch held-out model. The notebook checks that an
+from the selected held-out model. The notebook checks that an
 initialization or resume checkpoint uses the same held-out subject.
 
 On an Apple Silicon machine, start with `--preset tiny --device mps
@@ -321,9 +328,12 @@ python -m task3_fpsformer.train \
   --cache-dir "$PREPROCESSED_DIR/fpsformer" \
   --output-dir "$OUTPUT_DIR/fpsformer_all_subjects" \
   --preset portable \
-  --initialize "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
+  --initialize "$OUTPUT_DIR/a100_holdout_ema_01/checkpoints/best.pt" \
   --holdout-subject none \
-  --device cuda --amp fp16 \
+  --device cuda --amp bf16 \
+  --batch-size 16 --crop-size 256 --workers 4 \
+  --left-right-flip-probability 0.5 \
+  --ema-beta 0.999 --loss-lpips 0.1 \
   --epochs 10 --updates-per-epoch 1000 \
   --baseline-milestone-complete
 ```
@@ -334,7 +344,7 @@ First run exactly one full-volume translation:
 
 ```bash
 python -m task3_fpsformer.infer \
-  --checkpoint "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
+  --checkpoint "$OUTPUT_DIR/a100_holdout_ema_01/checkpoints/best.pt" \
   --input-root "$DATA_DIR" \
   --output-dir "$INFERENCE_DIR/fpsformer_smoke" \
   --device auto \
@@ -345,7 +355,7 @@ Then run the complete resumable 180-volume sweep to a separate directory:
 
 ```bash
 python -m task3_fpsformer.infer \
-  --checkpoint "$OUTPUT_DIR/paid_holdout_100k_01/checkpoints/best.pt" \
+  --checkpoint "$OUTPUT_DIR/a100_holdout_ema_01/checkpoints/best.pt" \
   --input-root "$DATA_DIR" \
   --output-dir "$INFERENCE_DIR/fpsformer_full" \
   --device auto \

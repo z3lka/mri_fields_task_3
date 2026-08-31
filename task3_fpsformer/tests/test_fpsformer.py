@@ -17,7 +17,14 @@ from task3_fpsformer.common import (
     prediction_path,
     split_domain,
 )
-from task3_fpsformer.data import _paired_crop, build_cache_index, complete_subjects
+from task3_fpsformer.data import (
+    PairRecord,
+    ProspectivePairDataset,
+    SliceRecord,
+    _paired_crop,
+    build_cache_index,
+    complete_subjects,
+)
 
 
 class CommonContractTests(unittest.TestCase):
@@ -70,6 +77,40 @@ class DataTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(target_crop - source_crop, np.full((6, 6), 1000))
 
+    def test_paired_left_right_flip_keeps_source_and_target_aligned(self) -> None:
+        source = np.arange(12, dtype=np.float32).reshape(3, 4)
+        target = source + 1000
+        source_flip, target_flip = _paired_crop(
+            source,
+            target,
+            None,
+            random_crop=False,
+            left_right_flip_probability=1.0,
+        )
+        np.testing.assert_array_equal(source_flip, source[::-1, :])
+        np.testing.assert_array_equal(target_flip - source_flip, np.full((3, 4), 1000))
+
+    def test_balanced_subset_can_match_submission_slab(self) -> None:
+        dataset = object.__new__(ProspectivePairDataset)
+        dataset.records = []
+        for modality in MODALITIES:
+            for source_field, target_field in directed_pairs():
+                for slice_index in (149, 150, 179, 180):
+                    source = SliceRecord(
+                        Path("source"), modality, source_field, "P_0001", slice_index
+                    )
+                    target = SliceRecord(
+                        Path("target"), modality, target_field, "P_0001", slice_index
+                    )
+                    dataset.records.append(PairRecord(source, target))
+        subset = dataset.balanced_subset(
+            30, seed=2026, slice_start=150, slice_end=180
+        )
+        self.assertEqual(len(subset), len(MODALITIES) * len(directed_pairs()) * 2)
+        self.assertTrue(
+            all(150 <= dataset.records[index].source.slice_index < 180 for index in subset.indices)
+        )
+
     def test_complete_subject_requires_all_fifteen_domains(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -108,6 +149,22 @@ class TrainingControlTests(unittest.TestCase):
         self.assertFalse(runtime_budget_exhausted(10_000, 0))
         self.assertFalse(runtime_budget_exhausted(599, 10))
         self.assertTrue(runtime_budget_exhausted(600, 10))
+
+    def test_ema_update_averages_parameters_and_copies_buffers(self) -> None:
+        import torch
+
+        from task3_fpsformer.train import update_ema
+
+        model = torch.nn.BatchNorm1d(2)
+        ema_model = torch.nn.BatchNorm1d(2)
+        with torch.no_grad():
+            model.weight.fill_(3.0)
+            model.running_mean.fill_(4.0)
+            ema_model.weight.fill_(1.0)
+            ema_model.running_mean.zero_()
+        update_ema(ema_model, model, 0.5)
+        torch.testing.assert_close(ema_model.weight, torch.full_like(model.weight, 2.0))
+        torch.testing.assert_close(ema_model.running_mean, model.running_mean)
 
 
 @unittest.skipUnless(importlib.util.find_spec("torch"), "PyTorch is not installed")

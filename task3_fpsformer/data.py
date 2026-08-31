@@ -391,24 +391,32 @@ def _paired_crop(
     crop_size: int | None,
     *,
     random_crop: bool,
+    left_right_flip_probability: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     if source.shape != target.shape:
         raise FPSFormerError(f"Paired slices have different shapes: {source.shape}/{target.shape}")
-    if crop_size is None:
-        return source, target
+    if not 0.0 <= left_right_flip_probability <= 1.0:
+        raise FPSFormerError("Left-right flip probability must be in [0,1]")
     height, width = source.shape
-    if crop_size > min(height, width):
-        raise FPSFormerError(
-            f"Crop {crop_size} exceeds paired slice shape {source.shape}; use 0 for full slices"
-        )
-    if random_crop:
-        top = random.randint(0, height - crop_size)
-        left = random.randint(0, width - crop_size)
+    if crop_size is None:
+        source_result, target_result = source, target
     else:
-        top = (height - crop_size) // 2
-        left = (width - crop_size) // 2
-    selection = np.s_[top : top + crop_size, left : left + crop_size]
-    return source[selection], target[selection]
+        if crop_size > min(height, width):
+            raise FPSFormerError(
+                f"Crop {crop_size} exceeds paired slice shape {source.shape}; use 0 for full slices"
+            )
+        if random_crop:
+            top = random.randint(0, height - crop_size)
+            left = random.randint(0, width - crop_size)
+        else:
+            top = (height - crop_size) // 2
+            left = (width - crop_size) // 2
+        selection = np.s_[top : top + crop_size, left : left + crop_size]
+        source_result, target_result = source[selection], target[selection]
+    if left_right_flip_probability and random.random() < left_right_flip_probability:
+        source_result = np.flip(source_result, axis=0)
+        target_result = np.flip(target_result, axis=0)
+    return source_result, target_result
 
 
 class ProspectivePairDataset(Dataset):
@@ -422,6 +430,7 @@ class ProspectivePairDataset(Dataset):
         exclude_subjects: set[str] | None = None,
         crop_size: int | None = 256,
         random_crop: bool = True,
+        left_right_flip_probability: float = 0.0,
     ):
         if torch is None:
             raise FPSFormerError("PyTorch is required for ProspectivePairDataset")
@@ -468,6 +477,7 @@ class ProspectivePairDataset(Dataset):
         self.pair_counts = dict(pair_counts)
         self.crop_size = crop_size
         self.random_crop = random_crop
+        self.left_right_flip_probability = left_right_flip_probability
 
     def __len__(self) -> int:
         return len(self.records)
@@ -479,7 +489,11 @@ class ProspectivePairDataset(Dataset):
         with np.load(record.target.path) as target_npz:
             target = target_npz["image"].astype(np.float32, copy=False)
         source, target = _paired_crop(
-            source, target, self.crop_size, random_crop=self.random_crop
+            source,
+            target,
+            self.crop_size,
+            random_crop=self.random_crop,
+            left_right_flip_probability=self.left_right_flip_probability,
         )
         source = np.ascontiguousarray(source)
         target = np.ascontiguousarray(target)
@@ -496,12 +510,29 @@ class ProspectivePairDataset(Dataset):
             "slice_index": record.source.slice_index,
         }
 
-    def balanced_subset(self, samples_per_pair: int, *, seed: int) -> Subset:
+    def balanced_subset(
+        self,
+        samples_per_pair: int,
+        *,
+        seed: int,
+        slice_start: int | None = None,
+        slice_end: int | None = None,
+    ) -> Subset:
         if samples_per_pair < 1:
             raise FPSFormerError("samples_per_pair must be positive")
+        if (slice_start is None) != (slice_end is None):
+            raise FPSFormerError("Slice start and end must be provided together")
+        if slice_start is not None and slice_start >= slice_end:
+            raise FPSFormerError("Slice range must satisfy start < end")
         groups: dict[tuple[str, str, str], list[int]] = defaultdict(list)
         for index, record in enumerate(self.records):
+            if slice_start is not None and not (
+                slice_start <= record.source.slice_index < slice_end
+            ):
+                continue
             groups[record.pair_key].append(index)
+        if len(groups) != len(MODALITIES) * len(directed_pairs()):
+            raise FPSFormerError("Requested validation slice range misses pair strata")
         rng = random.Random(seed)
         selected: list[int] = []
         for key in sorted(groups):
