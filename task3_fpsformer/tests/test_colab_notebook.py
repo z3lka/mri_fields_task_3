@@ -179,6 +179,13 @@ class FPSFormerColabNotebookTests(unittest.TestCase):
         self.assertIn("'--workers', str(PAID_WORKERS)", continuation)
         self.assertIn("'--progress'", continuation)
 
+    def test_metrics_review_tracks_training_loss(self):
+        cells = code_cells(load_notebook())
+        review = next(source for source in cells if "metrics_path = PAID_RUN_DIR" in source)
+        self.assertIn("record['train']", review)
+        self.assertIn("total_losses", review)
+        self.assertIn("plt.plot(loss_epochs, total_losses", review)
+
     def test_expensive_defaults_are_opt_in(self):
         text = "\n".join(code_cells(load_notebook()))
         for assignment in (
