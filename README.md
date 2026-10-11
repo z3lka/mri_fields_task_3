@@ -34,7 +34,7 @@ reproducibility details.
 | Workflow | Notebook | Guide |
 | --- | --- | --- |
 | Official pretrained baseline — start here | [Colab](notebooks/task3_pretrained_baseline_colab.ipynb) · [Kaggle](notebooks/task3_pretrained_baseline_kaggle.ipynb) | [Baseline guide](docs/baseline.md) |
-| StarGAN v2 training | [Colab](notebooks/task3_stargan_v2_colab.ipynb) | [Training notes and known limitations](docs/training.md) |
+| StarGAN v2 training | [Colab](notebooks/task3_stargan_v2_colab.ipynb) | [Training guide](docs/training.md) |
 | Conditional FPS-Former experiment | [Colab](task3_fpsformer/task3_fpsformer_colab.ipynb) | [Package guide](task3_fpsformer/README.md) |
 | Conditional 3D U-Net experiment | [Colab](notebooks/task3_3d_unet_colab.ipynb) | [Package guide](task3_3d_unet/README.md) |
 

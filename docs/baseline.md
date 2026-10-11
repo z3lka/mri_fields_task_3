@@ -148,14 +148,17 @@ python3 -m unittest -v tests.test_task3_pipeline tests.test_task3_colab_train \
   task3_fpsformer.tests.test_colab_notebook task3_3d_unet.tests.test_notebook
 ```
 
-The full suite also needs the packages' PyTorch/NIfTI dependencies:
+The full suite needs the packages' PyTorch/NIfTI dependencies. Use the Python
+environment containing those packages, such as the environment from the
+[FPS-Former guide](../task3_fpsformer/README.md):
 
 ```bash
-python3 -m unittest discover -v
+.venv-fpsformer/bin/python -m unittest discover -v
 ```
 
-The existing StarGAN training notebook has known separation-check failures;
-see [training notes](training.md). These do not come from running inference.
+Notebook checks cover source parsing, workflow separation, runtime-path guards,
+input staging, verified export, and unmounting after a failed export. See the
+[training guide](training.md) for the repaired StarGAN workflow.
 
 `tools/task3_review.py` creates prediction montages and supports quality metrics
 only with genuine paired targets; it needs nibabel, NumPy, and matplotlib.
