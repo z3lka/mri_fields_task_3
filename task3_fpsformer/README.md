@@ -17,8 +17,9 @@ task3_fpsformer/
 └── tests/
 ```
 
-This experiment adapts the design in `2412.10776v1.pdf` to MRIxFields2026 Task
-3. The authors have now released their reconstruction source at
+This experiment adapts the design in [the FPS-Former paper](https://arxiv.org/abs/2412.10776)
+to MRIxFields2026 Task 3. An optional local `2412.10776v1.pdf` is ignored by Git.
+The authors have now released their reconstruction source at
 <https://github.com/XiaoMengLiLiLi/FPS-Former>. The comparison below is pinned
 to commit `166d10d6e045b155b452fb26622b6b22063f82f5` (2025-04-07).
 
@@ -203,10 +204,11 @@ Create the source bundle on your Mac from the workspace root:
 ```bash
 zip -FS -r task3_fpsformer_colab.zip task3_fpsformer \
   -x '*/__pycache__/*' '*.pyc' '*/.DS_Store' \
-  'task3_fpsformer/task3_fpsformer_colab-2.ipynb'
+  '*/.ipynb_checkpoints/*' '*_colab-*.ipynb'
 ```
 
-This packages the current working files, including uncommitted changes. Open
+This packages the current working files, including uncommitted changes, and
+excludes caches and saved notebook copies. Open
 the notebook in Colab, select a GPU runtime, and use its default browser-upload
 option to upload this ZIP. Alternatively, put it in Drive, set
 `USE_BROWSER_UPLOAD_FOR_CODE = False`, and edit `DRIVE_CODE_ZIP_VALUE`.

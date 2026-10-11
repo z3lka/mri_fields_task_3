@@ -1,132 +1,82 @@
-# MRIxFields2026 Task 3
+# MRIxFields2026 · Task 3
 
-This workspace is Task 3 only. The organizer-pretrained baseline and future
-training are deliberately separate:
+Translate MRI scans between five magnetic field strengths with one shared,
+modality-conditioned model. This repository focuses on **Task 3**: T1W, T2W,
+and T2FLAIR translation across 0.1T, 1.5T, 3T, 5T, and 7T.
 
-| Workflow | Entry point | Runtime results |
+Start with the organizers' pretrained baseline. It turns the 45 released
+validation scans into 180 non-identity predictions and builds a checked
+`task3.zip` for you to upload.
+
+## Get started
+
+1. Open the [pretrained Colab notebook](notebooks/task3_pretrained_baseline_colab.ipynb)
+   in Google Colab and select a GPU runtime.
+2. Put `task3_pipeline.py`, `task3_build_submission.py`, and
+   `requirements-colab.txt` together in your private Drive source folder.
+   Set the notebook's code, validation-data, checkpoint, and export paths.
+   You can download the checkpoint through the notebook.
+3. Run the setup and audit cells. Enable smoke inference first, then the full
+   sweep after the smoke checks pass.
+4. Review the current official submission rules, enable packaging, and export
+   the validated archive and reports.
+
+The Colab baseline copies inputs into runtime storage and unmounts Drive before
+inference. Runtime files disappear when the session resets; export the final
+result before leaving. The notebook creates the archive but never uploads it.
+
+Using Kaggle instead? Open the [dual-T4 baseline notebook](notebooks/task3_pretrained_baseline_kaggle.ipynb).
+See the [baseline guide](docs/baseline.md) for setup, terminal commands, and
+reproducibility details.
+
+## Find your workflow
+
+| Workflow | Notebook | Guide |
 | --- | --- | --- |
-| Official pretrained baseline, validation predictions, and task3.zip | task3_pretrained_baseline_colab.ipynb | /content/mrixfields_task3/pretrained/results/ |
-| Future training and local holdout results | task3_stargan_v2_colab.ipynb | /content/mrixfields_task3/training/results/ |
+| Official pretrained baseline — start here | [Colab](notebooks/task3_pretrained_baseline_colab.ipynb) · [Kaggle](notebooks/task3_pretrained_baseline_kaggle.ipynb) | [Baseline guide](docs/baseline.md) |
+| StarGAN v2 training | [Colab](notebooks/task3_stargan_v2_colab.ipynb) | [Training notes and known limitations](docs/training.md) |
+| Conditional FPS-Former experiment | [Colab](task3_fpsformer/task3_fpsformer_colab.ipynb) | [Package guide](task3_fpsformer/README.md) |
+| Conditional 3D U-Net experiment | [Colab](notebooks/task3_3d_unet_colab.ipynb) | [Package guide](task3_3d_unet/README.md) |
 
-The baseline milestone comes first. Do not enable any training switch until
-the pretrained notebook has produced a structurally and numerically validated
-180-file task3.zip.
+Training and experimental workflows come after the pretrained submission
+milestone is verified and reported. Review their run switches before use.
 
-## Runtime and Drive boundary
+## Repository layout
 
-Both notebooks use mounted Drive only as persistent source/export storage:
+```text
+notebooks/                 Colab and Kaggle workflows
+docs/                      Detailed baseline and training guides
+tests/                     Baseline/helper checks
+tools/                     Prediction review, metric plots, and VRAM probe
+task3_fpsformer/            FPS-Former package, notebook, and tests
+task3_3d_unet/              3D U-Net package and tests
+task3_pipeline.py          Audit, plan, infer, and validate full volumes
+task3_build_submission.py  Official builder wrapper and archive validation
+task3_colab_train.py       StarGAN training helper
+```
 
-1. Mount Drive.
-2. Select every required input, then copy the scripts, NIfTI split(s), and
-   checkpoint into that workflow's `/content` runtime tree.
-3. Verify the runtime copies, flush Drive, and unmount it.
-4. Audit, preprocess, infer, train, validate, and package entirely in runtime.
-   Processing cells fail if Drive is still mounted.
-5. At the end, explicitly enable the final export cell. It remounts Drive,
-   copies only selected final artifacts to the workflow's separate export
-   folder, verifies the copy, and unmounts Drive again.
+Data, weights, predictions, archives, generated reports, presentation material,
+and saved notebook copies stay local and are ignored by Git. The organizer
+checkout is fetched separately into `official/MRIxFields2026/`.
 
-There is no Drive I/O while a model or data-processing process is running.
-Predictions, preprocessing caches, package caches, temporary checkpoints, and
-submission build trees are never written directly to Drive. Runtime contents
-disappear when Colab resets, so enable the final export only after the result
-you want to keep has passed its checks.
+## Local checks
 
-## Pretrained baseline
+Run these from the repository root; they need Python 3.10+ and no GPU:
 
-Open task3_pretrained_baseline_colab.ipynb. It owns the complete baseline path:
+```bash
+python3 -m unittest -v tests.test_task3_pipeline tests.test_task3_colab_train
+```
 
-- stage the 45 released validation NIfTI files into runtime;
-- recheck the live organizer Git and Hugging Face revisions;
-- stage and SHA-256-check the one shared multimodal checkpoint;
-- audit all inputs and plan all 180 non-identity translations;
-- run one separate full-volume smoke case;
-- run and validate the complete 180-volume sweep;
-- call the official Task 3 builder;
-- validate the exact 60-pair-directory/180-file slab tree;
-- create task3.zip with top-level task3/; and
-- optionally export the archive and compact JSON reports.
+The [baseline guide](docs/baseline.md) also covers dataset audits and the full
+test suite. Public validation targets are private: local structural checks
+confirm a valid artifact, while leaderboard results provide validation quality
+metrics.
 
-No cell uploads the archive.
+## Official resources
 
-The underlying focused Python tools are:
-
-- task3_pipeline.py: input audit, case plan, checkpoint download, inference,
-  and full-volume validation;
-- task3_build_submission.py: official builder invocation, submission-tree
-  checks, numerical checks, archive creation, and archive SHA-256.
-
-The final archive contract is:
-
-    task3.zip
-    └── task3/
-        ├── T1W/<source>_to_<target>/pred/*.nii.gz
-        ├── T2W/<source>_to_<target>/pred/*.nii.gz
-        └── T2FLAIR/<source>_to_<target>/pred/*.nii.gz
-
-It must contain 20 directed non-identity field pairs per modality, three files
-per pair, no identity mappings, and no segmentation content.
-
-## Training
-
-Open task3_stargan_v2_colab.ipynb only after the pretrained milestone. It
-contains:
-
-- prospective/optional retrospective staging into its own runtime data tree;
-- raw-data and extracted-slice audits;
-- an explicit baseline-milestone gate;
-- the subject-held-out pilot and its per-modality nRMSE/SSIM/LPIPS proxies;
-- optional all-subject continuation; and
-- one selected-checkpoint plus metrics/provenance export.
-
-It contains no pretrained validation sweep, submission builder, or archive
-export. See TASK3_TRAINING_COLAB.md for experiment constraints.
-
-## Conditional FPS-Former experiment
-
-The paper-inspired replacement model is implemented entirely in the
-`task3_fpsformer/` Python package and has a guided Colab notebook:
-
-- `task3_fpsformer/data.py`: paired prospective audit and slice cache;
-- `task3_fpsformer/model.py`: FMAM, SPAM, SDFN, HEFR, and one shared
-  modality/source-field/target-field conditioned encoder-decoder;
-- `task3_fpsformer/train.py`: subject-held-out, resumable training on MPS or
-  CUDA; and
-- `task3_fpsformer/infer.py`: smoke or complete 180-volume validation sweep.
-
-See `task3_fpsformer/README.md` for the comparison with the now-released source
-(pinned to `166d10d6e045b155b452fb26622b6b22063f82f5`), the deliberate Task 3
-departures, and exact Mac/Colab commands.
-
-## Reproducibility pins
-
-Prepared pins:
-
-- Official code commit:
-  f0f4ab2c54ab878b48ddfea8d13f4da512ca411e
-- Hugging Face revision:
-  f1a7d6b741b64c81871d0856fa2d7295d564c141
-- Shared checkpoint:
-  task3_any_to_any_multimodal/stargan_v2/pro_pretrained/weights/checkpoint_epoch50.pth
-- Checkpoint size: 631346455 bytes
-- Checkpoint SHA-256:
-  c2f8172c1fbdbf0426e22c7d3d2014632f175a38cf818f95e72b1917badabdeb
-
-The pretrained notebook checks live default revisions before it runs. If a
-revision differs, stop and review the official Task 3 config, weight, and
-submission contract as one coherent update.
-
-The final build is also locked behind LIVE_RULES_REVIEWED. The current GitHub
-submission README specifies a validation task3.zip, while the challenge tasks
-page also uses broader container-submission language. Confirm which mechanism
-applies to the current validation phase before exporting or uploading. The
-workspace never uploads either form.
-
-## Local non-GPU checks
-
-    python -m unittest discover -v
-    python task3_pipeline.py audit --input-root T1W --modalities T1W
-    python task3_pipeline.py plan --input-root T1W --modalities T1W
-
-The released validation targets are private. A validated prediction set is not
-a local metric result; public-validation metrics come from the leaderboard.
+[Competition](https://mrixfields.chihucloud.com/2026/) ·
+[Data](https://mrixfields.chihucloud.com/2026/data.html) ·
+[Task rules](https://mrixfields.chihucloud.com/2026/tasks.html) ·
+[Organizer code](https://github.com/MRIxFields/MRIxFields2026) ·
+[Shared Task 3 weights](https://huggingface.co/mrixfields/MRIxFields2026-Baseline/tree/main/task3_any_to_any_multimodal) ·
+[Submission format](https://github.com/MRIxFields/MRIxFields2026/blob/main/Submission/README.md)

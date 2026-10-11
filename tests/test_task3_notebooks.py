@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
-PRETRAINED_NOTEBOOK = ROOT / "task3_pretrained_baseline_colab.ipynb"
-TRAINING_NOTEBOOK = ROOT / "task3_stargan_v2_colab.ipynb"
+ROOT = Path(__file__).resolve().parents[1]
+PRETRAINED_NOTEBOOK = ROOT / "notebooks" / "task3_pretrained_baseline_colab.ipynb"
+TRAINING_NOTEBOOK = ROOT / "notebooks" / "task3_stargan_v2_colab.ipynb"
 
 
 def load_notebook(path: Path) -> dict:

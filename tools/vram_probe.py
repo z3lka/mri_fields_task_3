@@ -8,7 +8,7 @@ pass, and optimizer step.
 
 Example::
 
-    from vram_probe import measure_training_vram
+    from tools.vram_probe import measure_training_vram
 
     def train_step():
         optimizer.zero_grad(set_to_none=True)

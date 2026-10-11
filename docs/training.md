@@ -1,9 +1,15 @@
 # Task 3 training and training results on Colab
 
-Use task3_stargan_v2_colab.ipynb only after the separate
-task3_pretrained_baseline_colab.ipynb has produced and validated the official
+Use [the StarGAN training notebook](../notebooks/task3_stargan_v2_colab.ipynb)
+only after [the pretrained baseline notebook](../notebooks/task3_pretrained_baseline_colab.ipynb)
+has produced and validated the official
 baseline submission. Every training switch defaults to off, and the Python CLI
 also requires --baseline-milestone-complete.
+
+The existing StarGAN notebook does not yet satisfy the storage/separation
+contract below: its static checks currently fail. Treat this document as the
+intended training workflow and review the notebook before running it. Run its
+checks with `python -m unittest -v tests.test_task3_notebooks`.
 
 ## Storage layout
 

@@ -1,13 +1,19 @@
 .env
-.venv/
+.env.*
+!.env.example
+.venv*/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+._*
 
 # Sensitive/large competition artifacts
 *.nii
 *.nii.gz
 *.npz
+*.npy
 *.pth
 *.pt
 *.ckpt
@@ -17,6 +23,31 @@ runs/
 outputs/
 preprocessed/
 submissions/
+inference/
+data/
+cache/
+
+# Local data, generated reports, and exported results
+/T1W/
+/T2W/
+/T2FLAIR/
+/submission_ready/
+/metrics/
+/metrics*.jsonl
+/metrics*.png
+/metrics_dashboard*.html
+/task3_run_manifest*.json
+/report_2/
+/slides/
+
+# Personal/reference material and saved notebook copies (kept locally)
+/2412.10776v1.pdf
+/GROUP_PRESENTATION_OUTLINE.md
+/main_vit_fpsformer.ipynb
+/mri_t1w_pretrain_sub.ipynb
+/task3_fpsformer/task3_fpsformer_colab-2.ipynb
+/AGENTS_2.md
 
 # Organizer checkout is pinned/fetched separately.
 official/
+external/
