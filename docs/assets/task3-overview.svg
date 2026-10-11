@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">MRIxFields2026 — Task 3</title>
+  <desc id="description">One shared conditional model translates T1W, T2W, and T2FLAIR MRI between 0.1T, 1.5T, 3T, 5T, and 7T, covering all twenty directed non-identity field pairs.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop stop-color="#101b35"/>
+      <stop offset="1" stop-color="#213c56"/>
+    </linearGradient>
+    <linearGradient id="model" x2="1" y2="1">
+      <stop stop-color="#78e5d3"/>
+      <stop offset="1" stop-color="#afd6ff"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#7ca7bf" stroke-width="1.5"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="360" rx="22" fill="url(#background)"/>
+  <g fill="none" stroke="#5b819d" opacity="0.18">
+    <circle cx="914" cy="180" r="158"/>
+    <circle cx="914" cy="180" r="125"/>
+    <path d="M 655 32 V 328"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="48" y="60" fill="#82e1d1" font-size="13" font-weight="700" letter-spacing="2.5">RESEARCH / COMPETITION WRAP-UP</text>
+    <text x="46" y="121" fill="#f4f8fc" font-size="46" font-weight="700">MRIxFields2026</text>
+    <text x="49" y="161" fill="#b6cdf5" font-size="21" letter-spacing="2">TASK 3 · MRI FIELD TRANSLATION</text>
+    <text x="49" y="211" fill="#c6d6e6" font-size="19">Any-to-any translation. One shared model.</text>
+    <text x="49" y="240" fill="#c6d6e6" font-size="19">Conditioned on modality, source, and target.</text>
+    <g fill="#1b354d" stroke="#426079">
+      <rect x="48" y="280" width="142" height="38" rx="19"/>
+      <rect x="204" y="280" width="114" height="38" rx="19"/>
+      <rect x="332" y="280" width="220" height="38" rx="19"/>
+    </g>
+    <g fill="#e1edf8" font-size="14" text-anchor="middle">
+      <text x="119" y="304">3 modalities</text>
+      <text x="261" y="304">5 fields</text>
+      <text x="442" y="304">20 directed field pairs</text>
+    </g>
+    <g fill="none" stroke="#7ca7bf" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)">
+      <path d="M 810 83 L 856 142"/>
+      <path d="M 1019 83 L 972 142"/>
+      <path d="M 776 181 H 808"/>
+      <path d="M 810 275 L 856 220"/>
+      <path d="M 1019 275 L 972 220"/>
+    </g>
+    <g fill="#17334a" stroke="#5c91ab" stroke-width="1.5">
+      <rect x="746" y="43" width="108" height="40" rx="20"/>
+      <rect x="976" y="43" width="108" height="40" rx="20"/>
+      <rect x="685" y="161" width="88" height="40" rx="20"/>
+      <rect x="750" y="279" width="100" height="40" rx="20"/>
+      <rect x="978" y="279" width="84" height="40" rx="20"/>
+    </g>
+    <g fill="#dbeef9" font-size="18" font-weight="700" text-anchor="middle">
+      <text x="800" y="69">0.1T</text>
+      <text x="1030" y="69">1.5T</text>
+      <text x="729" y="187">3T</text>
+      <text x="800" y="305">5T</text>
+      <text x="1020" y="305">7T</text>
+    </g>
+    <rect x="814" y="144" width="200" height="74" rx="18" fill="url(#model)"/>
+    <text x="914" y="176" fill="#112a40" font-size="18" font-weight="700" text-anchor="middle">ONE SHARED MODEL</text>
+    <text x="914" y="201" fill="#23455b" font-size="14" text-anchor="middle">T1W · T2W · T2FLAIR</text>
+  </g>
+</svg>
